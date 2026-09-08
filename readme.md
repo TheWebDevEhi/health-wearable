@@ -336,13 +336,19 @@ Add 4.7 kΩ pull-ups on SDA and SCL if the sensor boards don't already carry the
 
 ## 9. Firmware layout
 
+Coding conventions and a log of what's been scaffolded so far live in
+[DEVELOPMENT.md](DEVELOPMENT.md) — read that before adding a new module so
+naming, task shape, and bus ownership stay consistent.
+
 ```
 Firmware/
-├── platformio.ini            # board = esp32-s3, framework = arduino
-├── README.md                 # this file
+├── platformio.ini            # board = esp32-s3-devkitc-1, framework = arduino
+├── readme.md                 # this file
+├── DEVELOPMENT.md            # conventions + scaffolding log
 └── src/
     ├── main.cpp              # setup, task creation, coordination
-    ├── config.h              # pin map, I2C addresses, alert limits
+    ├── config.h              # pin map, I2C addresses, alert limits, task tuning
+    ├── sensor_data.*         # mutex-guarded shared sensor snapshot
     ├── sensors/
     │   ├── ppg_max30102.*    # HR + SpO2, with motion gating
     │   ├── temp_mlx90614.*   # temperature + offset
@@ -358,6 +364,9 @@ Firmware/
     └── power/
         └── power_mgr.*       # deep sleep, double-tap wake, backlight timeout
 ```
+
+> **Status:** this tree is scaffolded — `begin()`/`update()` stubs and TODOs
+> only, no working drivers yet.
 
 ### Libraries
 
@@ -396,10 +405,14 @@ flowchart TB
 
 ## 10. Repository status
 
-This repository currently holds only this build brief — no `platformio.ini`,
-source, or drivers have been committed yet. The layout in [§9](#9-firmware-layout)
-is the intended structure once implementation starts, not a description of
-what exists on disk today.
+The `platformio.ini` and `src/` tree in [§9](#9-firmware-layout) are
+scaffolded: the module structure, pin map, shared data store, and FreeRTOS
+tasks are in place and match this brief, but every sensor/display/comms
+driver is still a stub (`begin()`/`update()` with TODOs) — no PPG, temp,
+motion, display, BLE, or OTA logic has been implemented yet, and none of it
+has run on real hardware. See [DEVELOPMENT.md](DEVELOPMENT.md) for the
+scaffolding log and conventions, and [§11](#11-bring-up-checklist) for what's
+still pending before that can start.
 
 ---
 

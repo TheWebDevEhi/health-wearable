@@ -1,0 +1,20 @@
+#pragma once
+
+#include <XPT2046_Touchscreen.h>
+
+#include "../config.h"
+
+// XPT2046 resistive touch, sharing the SPI bus with the display via its own
+// chip-select (readme.md #8.1). Secondary control input; the two side
+// buttons are primary (readme.md #4).
+class TouchXpt2046 {
+public:
+    bool begin();
+    bool pressed();
+
+    // Raw ADC point; calibration to panel coordinates is TODO (readme.md #11).
+    bool readRaw(uint16_t &x, uint16_t &y);
+
+private:
+    XPT2046_Touchscreen _touch{PIN_TOUCH_CS, PIN_TOUCH_IRQ};
+};
