@@ -1,4 +1,4 @@
-# BEME Upper-Arm Wearable — Firmware Build
+# BEME Upper-Arm Wearable — Firmware Build Brief
 
 A health-and-motion band worn on the upper arm, built on the **ESP32-S3
 SuperMini**. It senses on the body, shows live readings on a **128×160 1.8"
@@ -48,18 +48,18 @@ firmware uses to reject noisy PPG windows.
 ```mermaid
 flowchart TB
     subgraph BODY["On-body sensing"]
-        PPG["MAX30102\nPPG: HR + SpO2"]
-        TEMP["MLX90614\nIR temperature"]
-        ACCEL["LIS3DH\n3-axis accel"]
-        FUEL["MAX17048\nBattery gauge"]
+        PPG["MAX30102<br/>PPG: HR + SpO2"]
+        TEMP["MLX90614<br/>IR temperature"]
+        ACCEL["LIS3DH<br/>3-axis accel"]
+        FUEL["MAX17048<br/>battery gauge"]
     end
 
-    subgraph MCU["ESP32-S3 SuperMini"]
-        CORE["Sensing - Processing\nBLE - Wi-Fi"]
+    subgraph MCUBOX["ESP32-S3 SuperMini"]
+        CORE["Sensing, processing,<br/>BLE, Wi-Fi"]
     end
 
     subgraph UI["Display module"]
-        LCD["1.8\" 128x160 ST7735"]
+        LCD["1.8in 128x160 ST7735"]
         TOUCH["XPT2046 touch"]
     end
 
@@ -67,23 +67,23 @@ flowchart TB
     BTN["2 side buttons"]
 
     subgraph PHONE["Off-device"]
-        PWA["Web Bluetooth PWA\n(phone / desktop)"]
+        PWA["Web Bluetooth PWA"]
         OTA["OTA firmware server"]
     end
 
-    PPG -- "I2C (SDA/SCL, shared)" --> CORE
-    TEMP -- "I2C (shared)" --> CORE
-    ACCEL -- "I2C (shared)" --> CORE
-    ACCEL -. "INT1 wake (GPIO1)" .-> CORE
-    FUEL -- "I2C (shared)" --> CORE
+    PPG -->|I2C shared| CORE
+    TEMP -->|I2C shared| CORE
+    ACCEL -->|I2C shared| CORE
+    ACCEL -.->|INT1 wake, GPIO1| CORE
+    FUEL -->|I2C shared| CORE
 
-    CORE -- "SPI (shared)" --> LCD
-    CORE -- "SPI (shared)" --> TOUCH
+    CORE -->|SPI shared| LCD
+    CORE -->|SPI shared| TOUCH
     CORE --> LED
     BTN --> CORE
 
-    CORE -- "BLE GATT" --- PWA
-    CORE -- "Wi-Fi (on demand)" --- OTA
+    CORE ---|BLE GATT| PWA
+    CORE -.->|Wi-Fi, on demand| OTA
 ```
 
 Power path — see [§3](#3-power-architecture) for the diagram.
@@ -94,11 +94,11 @@ Power path — see [§3](#3-power-architecture) for the diagram.
 
 ```mermaid
 flowchart LR
-    LIPO["LiPo 523450\n~1000 mAh"] --> TP["TP4056\ncharger"]
+    LIPO["LiPo 523450<br/>~1000 mAh"] --> TP["TP4056<br/>charger"]
     USB["USB 5V"] --> TP
-    TP -- "VBAT" --> BUCK["TPS63000\nbuck-boost"]
-    TP -- "VBAT (direct)" --> FUEL["MAX17048\nfuel gauge"]
-    BUCK -- "3.3 V" --> LOAD["ESP32-S3 - Sensors - Display"]
+    TP -->|VBAT| BUCK["TPS63000<br/>buck-boost"]
+    TP -->|VBAT, direct| FUEL["MAX17048<br/>fuel gauge"]
+    BUCK -->|3.3 V| LOAD["ESP32-S3, sensors, display"]
 ```
 
 - The MAX17048 reads the raw cell voltage off **VBAT**, upstream of the
@@ -111,11 +111,11 @@ flowchart LR
 ## 4. Sensing plan
 
 | Sensor   | Reads                          | Sample rate                   | On-device output                                           |
-| -------- | ------------------------------ | ----------------------------- | ---------------------------------------------------------- |
-| MAX30102 | Red + IR PPG                   | ~100 Hz in short bursts       | Heart rate (bpm), SpO₂ (%)                                 |
-| MLX90614 | Object + ambient IR temp       | 0.5–1 Hz                      | Skin-surface temp (°C), with an offset for a body estimate |
-| LIS3DH   | X/Y/Z acceleration             | 25–100 Hz                     | Step count, activity state, tap, fall flag                 |
-| MAX17048 | Cell voltage & state of charge | on demand / every few minutes | Battery %, low-battery flag                                |
+| -------- | ------------------------------ | ------------------------------ | ----------------------------------------------------------- |
+| MAX30102 | Red + IR PPG                   | ~100 Hz in short bursts        | Heart rate (bpm), SpO₂ (%)                                  |
+| MLX90614 | Object + ambient IR temp       | 0.5–1 Hz                       | Skin-surface temp (°C), with an offset for a body estimate  |
+| LIS3DH   | X/Y/Z acceleration             | 25–100 Hz                      | Step count, activity state, tap, fall flag                  |
+| MAX17048 | Cell voltage & state of charge | on demand / every few minutes  | Battery %, low-battery flag                                 |
 
 Processing notes:
 
@@ -183,7 +183,7 @@ stateDiagram-v2
 **BLE**, modelled as GATT services:
 
 | Service                   | UUID        | Carries                                            |
-| ------------------------- | ----------- | -------------------------------------------------- |
+| -------------------------- | ----------- | --------------------------------------------------- |
 | Heart Rate                | `0x180D`    | Live bpm                                           |
 | Health Thermometer        | `0x1809`    | Temperature reading                                |
 | Battery                   | `0x180F`    | Charge percentage                                  |
@@ -221,37 +221,43 @@ sequenceDiagram
 All four sensors share **one I2C bus** (SDA, SCL). The display and touch
 controller share **one SPI bus** (SCLK, MOSI, MISO) with separate chip-selects.
 
+**I2C bus (sensors):**
+
 ```mermaid
-flowchart LR
-    MCU(("ESP32-S3\nSuperMini"))
+flowchart TB
+    MCU(("ESP32-S3<br/>SuperMini"))
+    MCU -->|GPIO8 SDA| I2C{{I2C bus}}
+    MCU -->|GPIO9 SCL| I2C
+    I2C --- LIS["LIS3DH<br/>0x18 / 0x19"]
+    I2C --- MLX["MLX90614<br/>0x5A"]
+    I2C --- MAX17["MAX17048<br/>0x36"]
+    I2C --- MAX30["MAX30102<br/>0x57"]
+    MCU -->|GPIO1 INT1 wake| LIS
+    MCU -->|GPIO40 optional INT| MAX30
+    MCU -->|GPIO38 optional ALRT| MAX17
+```
 
-    MCU -- "GPIO8 (SDA)" --- I2C{{I2C bus}}
-    MCU -- "GPIO9 (SCL)" --- I2C
-    I2C --- LIS["LIS3DH\n0x18/0x19"]
-    I2C --- MLX["MLX90614\n0x5A"]
-    I2C --- MAX17["MAX17048\n0x36"]
-    I2C --- MAX30["MAX30102\n0x57"]
+**SPI bus (display/touch) and remaining GPIO:**
 
-    MCU -- "GPIO12 (SCK)" --- SPI{{SPI bus}}
-    MCU -- "GPIO11 (MOSI)" --- SPI
-    MCU -- "GPIO13 (MISO)" --- SPI
+```mermaid
+flowchart TB
+    MCU(("ESP32-S3<br/>SuperMini"))
+    MCU -->|GPIO12 SCK| SPI{{SPI bus}}
+    MCU -->|GPIO11 MOSI| SPI
+    MCU -->|GPIO13 MISO| SPI
     SPI --- LCD["ST7735 panel"]
     SPI --- XPT["XPT2046 touch"]
 
-    MCU -- "GPIO10 CS" --- LCD
-    MCU -- "GPIO4 DC" --- LCD
-    MCU -- "GPIO5 RESET" --- LCD
-    MCU -- "GPIO6 PWM" --- LCD
-    MCU -- "GPIO7 T_CS" --- XPT
-    MCU -- "GPIO2 T_IRQ" --- XPT
+    MCU -->|GPIO10 CS| LCD
+    MCU -->|GPIO4 DC| LCD
+    MCU -->|GPIO5 RESET| LCD
+    MCU -->|GPIO6 backlight PWM| LCD
+    MCU -->|GPIO7 T_CS| XPT
+    MCU -->|GPIO2 T_IRQ| XPT
 
-    MCU -- "GPIO1 (RTC, INT1)" --- LIS
-    MCU -- "GPIO40 (opt. INT)" --- MAX30
-    MCU -- "GPIO38 (opt. ALRT)" --- MAX17
-
-    MCU -- "GPIO21" --- BTN1["Button 1\n(to GND, pull-up)"]
-    MCU -- "GPIO47" --- BTN2["Button 2\n(to GND, pull-up)"]
-    MCU --- LEDW["On-board WS2812\nstatus LED (GPIO48)"]
+    MCU -->|GPIO21| BTN1["Button 1<br/>to GND, pull-up"]
+    MCU -->|GPIO47| BTN2["Button 2<br/>to GND, pull-up"]
+    MCU --- LEDW["Status LED<br/>WS2812, GPIO48"]
 ```
 
 ### 8.1 Display module pinout
@@ -272,7 +278,7 @@ flowchart LR
 **Touch (XPT2046)**
 
 | Board pin | Meaning            | Connect to         |
-| --------- | ------------------ | ------------------ |
+| --------- | ------------------- | ------------------- |
 | T_CLK     | Touch SPI clock    | Shared SCLK        |
 | T_CS      | Touch chip select  | ESP32 GPIO         |
 | T_DIN     | Touch SPI data in  | Shared MOSI        |
@@ -282,32 +288,32 @@ flowchart LR
 ### 8.2 Power rails
 
 | Rail           | Source                         | Feeds                               |
-| -------------- | ------------------------------ | ----------------------------------- |
-| Cell 3.0–4.2 V | LiPo 523450 → TP4056 `B+`/`B−` | —                                   |
+| -------------- | ------------------------------- | ------------------------------------ |
+| Cell 3.0–4.2 V | LiPo 523450 → TP4056 `B+`/`B−` | —                                    |
 | VBAT           | TP4056 `OUT+`/`OUT−`           | Buck-boost input, MAX17048          |
 | 3.3 V          | TPS63000 buck-boost from VBAT  | ESP32 3V3 pin, all sensors, display |
 
 ### 8.3 ESP32-S3 SuperMini pin map
 
 | Function                      | Module pin(s) it serves | GPIO | Note                                          |
-| ----------------------------- | ----------------------- | ---- | --------------------------------------------- |
+| ------------------------------ | ------------------------ | ---- | ----------------------------------------------- |
 | SPI clock (shared)            | SCK, T_CLK              | 12   | Display + touch                               |
 | SPI MOSI (shared)             | SDA, T_DIN              | 11   | Display + touch                               |
 | SPI MISO (shared)             | T_DO                    | 13   | Touch data back                               |
-| Display chip select           | CS                      | 10   |                                               |
-| Display data/command          | A0                      | 4    |                                               |
-| Display reset                 | RESET                   | 5    |                                               |
-| Display backlight             | LED                     | 6    | PWM                                           |
-| Touch chip select             | T_CS                    | 7    |                                               |
-| Touch interrupt               | T_IRQ                   | 2    | Input                                         |
-| LIS3DH INT1 (double-tap wake) | —                       | 1    | RTC-capable pin, required for deep-sleep wake |
+| Display chip select           | CS                      | 10   |                                                |
+| Display data/command          | A0                      | 4    |                                                |
+| Display reset                 | RESET                   | 5    |                                                |
+| Display backlight             | LED                     | 6    | PWM                                            |
+| Touch chip select             | T_CS                    | 7    |                                                |
+| Touch interrupt               | T_IRQ                   | 2    | Input                                          |
+| LIS3DH INT1 (double-tap wake) | —                        | 1    | RTC-capable pin, required for deep-sleep wake |
 | I2C data                      | sensor SDA              | 8    | Shared by all four sensors                    |
 | I2C clock                     | sensor SCL              | 9    | Shared by all four sensors                    |
-| Button 1                      | —                       | 21   | To GND, internal pull-up; also a wake source  |
-| Button 2                      | —                       | 47   | To GND, internal pull-up                      |
-| Status LED                    | on-board WS2812         | 48   |                                               |
-| MAX30102 INT                  | —                       | 40   | Optional                                      |
-| MAX17048 ALRT                 | —                       | 38   | Optional low-battery flag                     |
+| Button 1                      | —                        | 21   | To GND, internal pull-up; also a wake source  |
+| Button 2                      | —                        | 47   | To GND, internal pull-up                      |
+| Status LED                    | on-board WS2812         | 48   |                                                |
+| MAX30102 INT                  | —                        | 40   | Optional                                       |
+| MAX17048 ALRT                 | —                        | 38   | Optional low-battery flag                     |
 
 **Pins to keep clear:** GPIO 0, 45, 46 (boot strapping), GPIO 3 (strapping),
 GPIO 19/20 (USB), GPIO 43/44 (serial debug). GPIO 26–32 are tied to flash/PSRAM
@@ -316,7 +322,7 @@ and are not brought out. The map above avoids all of these.
 ### 8.4 I2C addresses
 
 | Device   | Address            |
-| -------- | ------------------ |
+| -------- | ------------------- |
 | LIS3DH   | `0x18` (or `0x19`) |
 | MLX90614 | `0x5A`             |
 | MAX17048 | `0x36`             |
@@ -367,15 +373,15 @@ Firmware/
 
 ```mermaid
 flowchart TB
-    STORE[("Shared sensor\ndata store")]
+    STORE[("Shared sensor<br/>data store")]
 
-    T1["Sensor task\nsamples on timers"] -->|writes| STORE
-    T2["Display task\nredraws on change,\nhandles buttons/touch"] -->|reads| STORE
-    T3["BLE task\nnotifies subscribers,\nkeeps rolling history,\ntakes setting writes"] -->|reads/writes| STORE
-    T4["Power task\ndeep sleep,\ndouble-tap/button wake,\nbacklight timeout"] -.->|controls sleep of| T1
+    T1["Sensor task<br/>samples on timers"] -->|writes| STORE
+    T2["Display task<br/>redraws on change,<br/>handles buttons/touch"] -->|reads| STORE
+    T3["BLE task<br/>notifies subscribers,<br/>keeps rolling history,<br/>takes setting writes"] -->|reads/writes| STORE
+    T4["Power task<br/>deep sleep,<br/>double-tap/button wake,<br/>backlight timeout"] -.->|controls sleep of| T1
     T4 -.->|controls sleep of| T2
-    W["Wi-Fi\n(OTA only, on demand)"]
-    T3 -.->|triggers on "sync now"| W
+    W["Wi-Fi<br/>OTA only, on demand"]
+    T3 -.->|triggers on sync now| W
 ```
 
 - A sensor task that samples on timers and pushes results to a shared store.
