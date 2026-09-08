@@ -1,9 +1,27 @@
-# BEME Upper-Arm Wearable — Firmware Build Brief
+# BEME Upper-Arm Wearable — Firmware Build
 
 A health-and-motion band worn on the upper arm, built on the **ESP32-S3
 SuperMini**. It senses on the body, shows live readings on a **128×160 1.8"
 ST7735** panel with **XPT2046** touch, and syncs to an Android/desktop
 **Web Bluetooth PWA** over BLE, with Wi-Fi reserved for firmware updates.
+
+> **Status:** hardware and firmware architecture specified; implementation not yet started (see [§10 Repository status](#10-repository-status)).
+
+---
+
+## Table of contents
+
+1. [What the device does](#1-what-the-device-does)
+2. [System architecture](#2-system-architecture)
+3. [Power architecture](#3-power-architecture)
+4. [Sensing plan](#4-sensing-plan)
+5. [On-screen readout and controls](#5-on-screen-readout-and-controls)
+6. [Power design](#6-power-design)
+7. [Communication](#7-communication)
+8. [Wiring](#8-wiring)
+9. [Firmware layout](#9-firmware-layout)
+10. [Repository status](#10-repository-status)
+11. [Bring-up checklist](#11-bring-up-checklist)
 
 ---
 
@@ -25,40 +43,72 @@ firmware uses to reject noisy PPG windows.
 
 ---
 
-## 2. System block diagram
+## 2. System architecture
 
-```
-                 ┌──────────────────────────────┐
-   Skin / arm ─► │  MAX30102  (PPG: HR, SpO2)    │──┐
-                 │  MLX90614  (IR temperature)   │  │  I2C bus
-   Motion   ───► │  LIS3DH    (3-axis accel)     │──┤  (SDA / SCL, shared)
-                 │  MAX17048  (battery gauge)    │──┘
-                 └──────────────────────────────┘
-                              │
-                              ▼
-        ┌───────────────────────────────────────┐        ┌────────────────────────┐
-        │          ESP32-S3 SuperMini           │◄─ SPI ─►│ 1.8" 128×160 ST7735     │
-        │  sensing • processing • BLE • Wi-Fi   │  (shared)│ + XPT2046 touch        │
-        └───────────────────────────────────────┘        └────────────────────────┘
-              │            │             │
-        status LED    BLE link      Wi-Fi (on demand)
-         2 buttons        │              │
-                          ▼              ▼
-                   Web Bluetooth      OTA firmware
-                   PWA (phone/desktop)   update
+```mermaid
+flowchart TB
+    subgraph BODY["On-body sensing"]
+        PPG["MAX30102\nPPG: HR + SpO2"]
+        TEMP["MLX90614\nIR temperature"]
+        ACCEL["LIS3DH\n3-axis accel"]
+        FUEL["MAX17048\nBattery gauge"]
+    end
+
+    subgraph MCU["ESP32-S3 SuperMini"]
+        CORE["Sensing - Processing\nBLE - Wi-Fi"]
+    end
+
+    subgraph UI["Display module"]
+        LCD["1.8\" 128x160 ST7735"]
+        TOUCH["XPT2046 touch"]
+    end
+
+    LED["Status LED (WS2812)"]
+    BTN["2 side buttons"]
+
+    subgraph PHONE["Off-device"]
+        PWA["Web Bluetooth PWA\n(phone / desktop)"]
+        OTA["OTA firmware server"]
+    end
+
+    PPG -- "I2C (SDA/SCL, shared)" --> CORE
+    TEMP -- "I2C (shared)" --> CORE
+    ACCEL -- "I2C (shared)" --> CORE
+    ACCEL -. "INT1 wake (GPIO1)" .-> CORE
+    FUEL -- "I2C (shared)" --> CORE
+
+    CORE -- "SPI (shared)" --> LCD
+    CORE -- "SPI (shared)" --> TOUCH
+    CORE --> LED
+    BTN --> CORE
+
+    CORE -- "BLE GATT" --- PWA
+    CORE -- "Wi-Fi (on demand)" --- OTA
 ```
 
-Power path:
-
-```
- LiPo 523450 ─► TP4056 (charge) ─► VBAT ─► TPS63000 buck-boost ─► 3.3 V ─► everything
-                                     │
-                                     └─► MAX17048 (reads the cell directly)
-```
+Power path — see [§3](#3-power-architecture) for the diagram.
 
 ---
 
-## 3. Sensing plan
+## 3. Power architecture
+
+```mermaid
+flowchart LR
+    LIPO["LiPo 523450\n~1000 mAh"] --> TP["TP4056\ncharger"]
+    USB["USB 5V"] --> TP
+    TP -- "VBAT" --> BUCK["TPS63000\nbuck-boost"]
+    TP -- "VBAT (direct)" --> FUEL["MAX17048\nfuel gauge"]
+    BUCK -- "3.3 V" --> LOAD["ESP32-S3 - Sensors - Display"]
+```
+
+- The MAX17048 reads the raw cell voltage off **VBAT**, upstream of the
+  buck-boost, so its state-of-charge reading isn't affected by regulation.
+- USB and battery both ultimately feed the 3.3 V rail — see the diode note in
+  [§6](#6-power-design) for how they're kept from fighting each other.
+
+---
+
+## 4. Sensing plan
 
 | Sensor   | Reads                          | Sample rate                   | On-device output                                           |
 | -------- | ------------------------------ | ----------------------------- | ---------------------------------------------------------- |
@@ -80,7 +130,7 @@ Processing notes:
 
 ---
 
-## 4. On-screen readout and controls
+## 5. On-screen readout and controls
 
 - **Home screen** — heart rate and SpO₂ as large numbers, with temperature, step
   count, and a battery bar underneath.
@@ -100,9 +150,18 @@ screen. A button press wakes it too. In firmware, the Adafruit LIS3DH library
 exposes this through `setClick(2, threshold)`; tune the threshold and tap timing
 so a deliberate double-tap fires but ordinary arm movement does not.
 
+```mermaid
+stateDiagram-v2
+    [*] --> Awake
+    Awake --> DeepSleep: idle timeout
+    DeepSleep --> Awake: LIS3DH double-tap (GPIO1 IRQ)
+    DeepSleep --> Awake: button press
+    Awake --> Awake: real movement (activity update only)
+```
+
 ---
 
-## 5. Power design
+## 6. Power design
 
 - **Charging** — TP4056 charges the 523450 LiPo (~1000 mAh) over USB. Size the
   charge-current resistor for the cell (1C is a safe default).
@@ -119,7 +178,7 @@ so a deliberate double-tap fires but ordinary arm movement does not.
 
 ---
 
-## 6. Communication
+## 7. Communication
 
 **BLE**, modelled as GATT services:
 
@@ -138,14 +197,64 @@ Every connection needs a fresh user tap (no silent reconnect), and the link
 drops when the tab closes — the band's rolling history covers the gap by
 re-sending recent readings on reconnect.
 
+```mermaid
+sequenceDiagram
+    participant U as User (tap "Connect")
+    participant PWA as Web Bluetooth PWA
+    participant BLE as ESP32-S3 (BLE task)
+
+    U->>PWA: Tap connect (user gesture required)
+    PWA->>BLE: GATT connect
+    BLE-->>PWA: Rolling history (backfill gap since last connect)
+    loop While connected
+        BLE-->>PWA: Notify HR / SpO2 / Temp / Battery / Motion
+        PWA-->>BLE: Setting writes (alert limits, brightness)
+    end
+    U--xPWA: Tab closed / out of range
+    Note over BLE: Keeps sampling + buffering history while disconnected
+```
+
 ---
 
-## 7. Wiring
+## 8. Wiring
 
 All four sensors share **one I2C bus** (SDA, SCL). The display and touch
 controller share **one SPI bus** (SCLK, MOSI, MISO) with separate chip-selects.
 
-### 7.1 Display module pinout
+```mermaid
+flowchart LR
+    MCU(("ESP32-S3\nSuperMini"))
+
+    MCU -- "GPIO8 (SDA)" --- I2C{{I2C bus}}
+    MCU -- "GPIO9 (SCL)" --- I2C
+    I2C --- LIS["LIS3DH\n0x18/0x19"]
+    I2C --- MLX["MLX90614\n0x5A"]
+    I2C --- MAX17["MAX17048\n0x36"]
+    I2C --- MAX30["MAX30102\n0x57"]
+
+    MCU -- "GPIO12 (SCK)" --- SPI{{SPI bus}}
+    MCU -- "GPIO11 (MOSI)" --- SPI
+    MCU -- "GPIO13 (MISO)" --- SPI
+    SPI --- LCD["ST7735 panel"]
+    SPI --- XPT["XPT2046 touch"]
+
+    MCU -- "GPIO10 CS" --- LCD
+    MCU -- "GPIO4 DC" --- LCD
+    MCU -- "GPIO5 RESET" --- LCD
+    MCU -- "GPIO6 PWM" --- LCD
+    MCU -- "GPIO7 T_CS" --- XPT
+    MCU -- "GPIO2 T_IRQ" --- XPT
+
+    MCU -- "GPIO1 (RTC, INT1)" --- LIS
+    MCU -- "GPIO40 (opt. INT)" --- MAX30
+    MCU -- "GPIO38 (opt. ALRT)" --- MAX17
+
+    MCU -- "GPIO21" --- BTN1["Button 1\n(to GND, pull-up)"]
+    MCU -- "GPIO47" --- BTN2["Button 2\n(to GND, pull-up)"]
+    MCU --- LEDW["On-board WS2812\nstatus LED (GPIO48)"]
+```
+
+### 8.1 Display module pinout
 
 **Display + power**
 
@@ -170,7 +279,7 @@ controller share **one SPI bus** (SCLK, MOSI, MISO) with separate chip-selects.
 | T_DO      | Touch SPI data out | Shared MISO        |
 | T_IRQ     | Pen-down interrupt | ESP32 GPIO (input) |
 
-### 7.2 Power rails
+### 8.2 Power rails
 
 | Rail           | Source                         | Feeds                               |
 | -------------- | ------------------------------ | ----------------------------------- |
@@ -178,7 +287,7 @@ controller share **one SPI bus** (SCLK, MOSI, MISO) with separate chip-selects.
 | VBAT           | TP4056 `OUT+`/`OUT−`           | Buck-boost input, MAX17048          |
 | 3.3 V          | TPS63000 buck-boost from VBAT  | ESP32 3V3 pin, all sensors, display |
 
-### 7.3 ESP32-S3 SuperMini pin map
+### 8.3 ESP32-S3 SuperMini pin map
 
 | Function                      | Module pin(s) it serves | GPIO | Note                                          |
 | ----------------------------- | ----------------------- | ---- | --------------------------------------------- |
@@ -204,7 +313,7 @@ controller share **one SPI bus** (SCLK, MOSI, MISO) with separate chip-selects.
 GPIO 19/20 (USB), GPIO 43/44 (serial debug). GPIO 26–32 are tied to flash/PSRAM
 and are not brought out. The map above avoids all of these.
 
-### 7.4 I2C addresses
+### 8.4 I2C addresses
 
 | Device   | Address            |
 | -------- | ------------------ |
@@ -217,7 +326,7 @@ Add 4.7 kΩ pull-ups on SDA and SCL if the sensor boards don't already carry the
 
 ---
 
-## 8. Firmware layout
+## 9. Firmware layout
 
 ```
 Firmware/
@@ -256,15 +365,37 @@ Firmware/
 
 ### Task shape (FreeRTOS)
 
-- a sensor task that samples on timers and pushes results to a shared store;
-- a display task that redraws on change and handles the buttons and touch;
-- a BLE task that notifies subscribers, keeps the rolling history, and takes setting writes;
-- a power task that manages deep sleep, double-tap/button wake, and backlight timeout;
+```mermaid
+flowchart TB
+    STORE[("Shared sensor\ndata store")]
+
+    T1["Sensor task\nsamples on timers"] -->|writes| STORE
+    T2["Display task\nredraws on change,\nhandles buttons/touch"] -->|reads| STORE
+    T3["BLE task\nnotifies subscribers,\nkeeps rolling history,\ntakes setting writes"] -->|reads/writes| STORE
+    T4["Power task\ndeep sleep,\ndouble-tap/button wake,\nbacklight timeout"] -.->|controls sleep of| T1
+    T4 -.->|controls sleep of| T2
+    W["Wi-Fi\n(OTA only, on demand)"]
+    T3 -.->|triggers on "sync now"| W
+```
+
+- A sensor task that samples on timers and pushes results to a shared store.
+- A display task that redraws on change and handles the buttons and touch.
+- A BLE task that notifies subscribers, keeps the rolling history, and takes setting writes.
+- A power task that manages deep sleep, double-tap/button wake, and backlight timeout.
 - Wi-Fi called only for an update, not in the hot loop.
 
 ---
 
-## 9. Bring-up checklist
+## 10. Repository status
+
+This repository currently holds only this build brief — no `platformio.ini`,
+source, or drivers have been committed yet. The layout in [§9](#9-firmware-layout)
+is the intended structure once implementation starts, not a description of
+what exists on disk today.
+
+---
+
+## 11. Bring-up checklist
 
 1. **ST7735 tab and offsets** — set in `TFT_eSPI` until the image sits square with correct colours.
 2. **Display VCC** — confirm 3.3 V lights the backlight fully.
