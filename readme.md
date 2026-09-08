@@ -1,5 +1,7 @@
 # BEME Upper-Arm Wearable — Firmware Build Brief
 
+**Version:** 0.1.0
+
 A health-and-motion band worn on the upper arm, built on the **ESP32-S3
 SuperMini**. It senses on the body, shows live readings on a **128×160 1.8"
 ST7735** panel with **XPT2046** touch, and syncs to an Android/desktop
