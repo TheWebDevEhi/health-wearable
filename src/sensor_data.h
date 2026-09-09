@@ -23,6 +23,12 @@ struct SensorSnapshot {
     bool batteryLow = false;
 
     uint32_t lastUpdateMs = 0;
+
+    // False until the sensor task has completed its first full cycle. Every
+    // field above defaults to 0, and 0 is a false alert trigger for several
+    // of them (e.g. battery/temp read as critically low) — gates alert
+    // detection and "--" placeholders during that startup window.
+    bool dataValid = false;
 };
 
 // Call once from setup(), before any task touches the store.
@@ -32,3 +38,9 @@ void sensorDataInit();
 // a different access pattern (e.g. returning a pointer/reference).
 SensorSnapshot sensorDataGet();
 void sensorDataSet(const SensorSnapshot &snapshot);
+
+// True when any reading has crossed the limits in config.h (readme.md #4).
+// Shared by the display task (to switch to the Alert screen) and the BLE
+// task (to set the "Motion & Control" alert-flags characteristic) so the two
+// don't drift out of sync on what counts as an alert.
+bool sensorDataIsAlert(const SensorSnapshot &snapshot);

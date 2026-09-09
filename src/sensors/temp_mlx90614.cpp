@@ -3,12 +3,21 @@
 #include "../config.h"
 
 bool TempMlx90614::begin(TwoWire &bus) {
-    // TODO: initialize the Adafruit MLX90614 driver on I2C_ADDR_MLX90614.
-    (void)bus;
-    return false;
+    return _mlx.begin(I2C_ADDR_MLX90614, &bus);
 }
 
 void TempMlx90614::update() {
-    // TODO: read object temperature, apply TEMP_SKIN_TO_BODY_OFFSET_C, and
-    // smooth across a few samples (readme.md #3).
+    float objectTempC = _mlx.readObjectTempC() + TEMP_SKIN_TO_BODY_OFFSET_C;
+
+    _smoothBuffer[_smoothIndex] = objectTempC;
+    _smoothIndex = (_smoothIndex + 1) % kSmoothingSamples;
+    if (_smoothCount < kSmoothingSamples) {
+        _smoothCount++;
+    }
+
+    float sum = 0.0f;
+    for (int i = 0; i < _smoothCount; i++) {
+        sum += _smoothBuffer[i];
+    }
+    _skinTempC = sum / static_cast<float>(_smoothCount);
 }

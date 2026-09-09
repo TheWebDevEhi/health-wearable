@@ -7,7 +7,7 @@ SuperMini**. It senses on the body, shows live readings on a **128×160 1.8"
 ST7735** panel with **XPT2046** touch, and syncs to an Android/desktop
 **Web Bluetooth PWA** over BLE, with Wi-Fi reserved for firmware updates.
 
-> **Status:** hardware and firmware architecture specified; implementation not yet started (see [§10 Repository status](#10-repository-status)).
+> **Status:** firmware builds and runs the full control flow described below (sensors, display, BLE, power, OTA scaffolding) against the real ESP32-S3 toolchain — but has not run on physical hardware yet (see [§10 Repository status](#10-repository-status)).
 
 ---
 
@@ -357,7 +357,8 @@ Firmware/
     ├── display/
     │   ├── screen.*          # ST7735 via TFT_eSPI
     │   ├── touch_xpt2046.*   # touch read + calibration
-    │   └── ui_screens.*      # home, detail, alert, settings
+    │   ├── ui_screens.*      # home, detail, alert, settings
+    │   └── status_led.*      # on-board WS2812 alert blink
     ├── comms/
     │   ├── ble_gatt.*        # standard + custom services; rolling history buffer
     │   └── wifi_sync.*       # OTA firmware update, on demand
@@ -365,8 +366,8 @@ Firmware/
         └── power_mgr.*       # deep sleep, double-tap wake, backlight timeout
 ```
 
-> **Status:** this tree is scaffolded — `begin()`/`update()` stubs and TODOs
-> only, no working drivers yet.
+> **Status:** builds clean with real driver logic throughout (see
+> [§10](#10-repository-status)) — not run on physical hardware yet.
 
 ### Libraries
 
@@ -405,14 +406,29 @@ flowchart TB
 
 ## 10. Repository status
 
-The `platformio.ini` and `src/` tree in [§9](#9-firmware-layout) are
-scaffolded: the module structure, pin map, shared data store, and FreeRTOS
-tasks are in place and match this brief, but every sensor/display/comms
-driver is still a stub (`begin()`/`update()` with TODOs) — no PPG, temp,
-motion, display, BLE, or OTA logic has been implemented yet, and none of it
-has run on real hardware. See [DEVELOPMENT.md](DEVELOPMENT.md) for the
-scaffolding log and conventions, and [§11](#11-bring-up-checklist) for what's
-still pending before that can start.
+The `platformio.ini` and `src/` tree in [§9](#9-firmware-layout) build clean
+against the real ESP32-S3 toolchain (PlatformIO), with real driver logic —
+not stubs — for every subsystem in this brief:
+
+- **Sensors** — LIS3DH motion/double-tap, MLX90614 temperature (smoothed),
+  MAX17048 battery, and MAX30102 HR/SpO2 (motion-gated, ratio-of-ratios
+  algorithm) are all wired to their real driver libraries.
+- **Display** — ST7735 via TFT_eSPI, XPT2046 touch (read but not yet hooked
+  to UI actions), all four screens (Home/Detail/Alert/Settings) drawing real
+  content, and the WS2812 status LED.
+- **Power** — idle-timeout deep sleep with double-tap/button EXT1 wake.
+- **BLE** — a real NimBLE GATT server: standard Heart Rate/Health
+  Thermometer/Battery services plus the custom "Motion & Control" service,
+  with a rolling history buffer sent on reconnect.
+- **Wi-Fi/OTA** — a real connect → update → disconnect flow, gated behind
+  placeholder network/server credentials (none exist yet for this project).
+
+What's still open: step-counting and fall-detection are placeholder
+heuristics, not tuned algorithms; the Settings screen and BLE settings-write
+have no interaction wired yet; and — most importantly — **none of this has
+run on physical hardware**. See [DEVELOPMENT.md](DEVELOPMENT.md) for the full
+implementation log and the conventions behind these decisions, and
+[§11](#11-bring-up-checklist) for what's next once real hardware is in hand.
 
 ---
 

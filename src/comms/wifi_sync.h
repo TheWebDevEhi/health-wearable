@@ -4,9 +4,13 @@
 // called from the hot loop.
 class WifiSync {
 public:
+    // Connects Wi-Fi, pulls a firmware image over HTTP via HTTPUpdate, then
+    // disconnects Wi-Fi either way. Blocks until the attempt finishes —
+    // call from a task that can afford to block (not sensor/display/BLE),
+    // e.g. in response to the Settings screen's "sync now" action.
     bool startOtaUpdate();
-    bool inProgress() const { return _inProgress; }
 
 private:
-    bool _inProgress = false;
+    bool connectWifi();
+    void disconnectWifi();
 };

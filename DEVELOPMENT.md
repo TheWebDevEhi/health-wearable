@@ -106,6 +106,60 @@ reverts the pin map back to the library's default.
 `FIRMWARE_VERSION` in `src/config.h` and the `**Version:**` line at the top
 of `readme.md` move together — bump both in the same commit.
 
+### Windows build path workaround
+
+Some libraries' own example filenames (e.g. SparkFun MAX3010x's
+`Example7_Basic_Readings_Interrupts.ino`) push the full path past Windows'
+260-char `MAX_PATH` once nested under this project's directory, which is
+already deep (a git worktree under `.claude/worktrees/...`). `platformio.ini`
+redirects `libdeps_dir`/`build_dir` to `${sysenv.USERPROFILE}\.pio-libdeps`
+and `\.pio-build` — short, user-portable paths outside the project — instead
+of relying on Windows long-path support being enabled system-wide. If
+`pio run` ever fails with `WinError 3`/`[Errno 2]` during a library install,
+this is why; don't move the project itself to fix it, the ini already
+routes around it.
+
+### Alert detection is one function, not one per caller
+
+`sensorDataIsAlert()` in `sensor_data.h`/`.cpp` is the single place that
+decides whether a `SensorSnapshot` counts as an alert (readme.md §4's
+thresholds from `config.h`). Both the display task (to switch to the Alert
+screen) and `BleGatt::notify()` (to set the alert-flags bit) call it rather
+than re-deriving the same conditions — if you add a new alert condition, add
+it there once. `UiScreens::renderAlert()` still lists individual reasons for
+the on-screen text and must stay logically in sync with it (mirrored, not
+shared, since one returns a single bool and the other builds a list of
+strings).
+
+### The `dataValid` gate
+
+Every `SensorSnapshot` field defaults to `0`/`false`, and `0` is itself a
+false alert trigger for several fields (temp/battery read as critically low
+before the first real sample). `SensorSnapshot::dataValid` is set once the
+sensor task completes its first cycle; `sensorDataIsAlert()` and
+`BleGatt::notify()` both return early while it's false. Any new consumer of
+`SensorSnapshot` that makes a threshold decision needs the same guard.
+
+### BLE UUIDs
+
+The custom "Motion & Control" service and its four characteristics
+(steps, flags, history, settings-write) use randomly generated 128-bit
+UUIDs, defined as string literals directly in `ble_gatt.cpp::begin()` —
+they're not from any BLE SIG spec, readme.md doesn't pin specific values,
+and once a companion app is built against them they must not change. Standard
+services (Heart Rate `0x180D`, Health Thermometer `0x1809`, Battery
+`0x180F`) and their characteristics use the real BLE SIG 16-bit UUIDs and
+wire formats — including the Health Thermometer's IEEE-11073 32-bit FLOAT
+encoding for temperature, which is not a plain `float` cast.
+
+### Button semantics
+
+readme.md §4 says the two side buttons are primary and doesn't specify what
+each does. `main.cpp::pollButtons()` picks: Button 1 cycles
+Home → Detail → Settings → Home; Button 2 cycles the Detail screen's metric,
+or jumps to Home from elsewhere. This is an implementation choice, not a
+spec — expect it to change once there's a real device to try it on.
+
 ### Comments
 
 Same rule as the rest of this project: no comments that restate what the
@@ -151,3 +205,86 @@ Created `platformio.ini` and the `src/` tree from
 Not yet done: any actual driver/algorithm implementation (everything under
 `update()` is a stub), TFT_eSPI tab variant confirmation, PSRAM confirmation,
 and the bring-up checklist in readme.md §11 — all pending real hardware.
+
+**2026-09-09 — Foundation-to-top implementation pass.**
+Replaced the stubs with real driver logic, one layer at a time, compiling
+against the actual ESP32-S3 toolchain after each layer (PlatformIO Core
+6.1.19 is installed in this environment) rather than waiting until the end —
+caught real bugs early this way (see below). Order followed the dependency
+chain: sensors first (motion before PPG, since PPG needs motion's gating
+output), then display, then power, then BLE/Wi-Fi, then main.cpp wiring.
+
+- **Sensors** — `MotionLis3dh` (Adafruit_LIS3DH: `begin()`, `setRange()`,
+  `setClick(2, threshold)` for the double-tap wake engine, magnitude-based
+  movement detection; step-counting and fall detection still TODO — real
+  algorithms, not just missing plumbing). `TempMlx90614` (Adafruit_MLX90614,
+  `readObjectTempC()` + the config.h offset, 4-sample moving average).
+  `FuelMax17048` (Adafruit_MAX17048 — note the library package is "Adafruit
+  MAX1704X" but the class is `Adafruit_MAX17048`; `cellPercent()` against a
+  placeholder low-battery threshold). `PpgMax30102` (SparkFun's library
+  class is `MAX30105`, covers the whole MAX3010x family; ring-buffer
+  drained non-blockingly each tick rather than the reference example's
+  blocking `while(available()==false) check();` loop, since this runs on a
+  shared FreeRTOS task tick — see the comment in `ppg_max30102.cpp`. HR/SpO2
+  via the bundled `spo2_algorithm.h` ratio-of-ratios function). All four
+  library APIs were verified against real source/examples (GitHub fetches,
+  not memory) before writing code that calls them — see the PlatformIO
+  registry search log in the previous entry for why that mattered.
+- **Display** — `Screen`/`TouchXpt2046` were already close to real from the
+  scaffold. Verified (by reading arduino-esp32's `SPI.cpp` source) that
+  `TouchXpt2046::begin()`'s internal `SPI.begin()` call is a safe no-op once
+  `main.cpp` has already called `SPI.begin()` with the shared bus's custom
+  pins — `SPIClass::begin()` returns early if the bus is already
+  initialized, so it won't reset the pins to hardware defaults. Documented
+  that ordering dependency in `touch_xpt2046.h` rather than leaving it
+  implicit. `UiScreens` now does real TFT_eSPI drawing for all four screens,
+  including a small ring-buffer trend line on the Detail screen. Added
+  `StatusLed` (Adafruit NeoPixel, not in the original §9 tree — see "Shared
+  data store" entry above for the pattern of calling out such additions) for
+  the WS2812 alert-blink behaviour in readme.md §4.
+- **Power** — `PowerMgr` now does a real idle-timeout → backlight-off →
+  `esp_deep_sleep_start()` sequence (`IDLE_TIMEOUT_MS` in config.h), wired to
+  a `Screen` reference via a new `attachScreen()` (Screen isn't constructed
+  yet when `PowerMgr::begin()` runs in `main.cpp`'s setup order).
+- **BLE** — Real NimBLE-Arduino 2.x GATT server: standard Heart Rate
+  (`0x180D`), Health Thermometer (`0x1809`, with correct IEEE-11073 32-bit
+  FLOAT temperature encoding — not a raw float cast), and Battery (`0x180F`)
+  services, plus the custom "Motion & Control" service (see "BLE UUIDs"
+  above). Connect/disconnect tracked via `NimBLEServerCallbacks`; a rolling
+  history ring buffer (60 entries, ~1 min at the BLE task's 1 Hz tick) is
+  pushed on every `notify()` and drained to the client on connect, matching
+  readme.md §6's reconnect-backfill behaviour. Verified the NimBLE-Arduino
+  2.x callback signatures and `createService`/`createCharacteristic` API
+  against the actual installed version (2.5.1) via the library's own
+  example, since 1.x→2.x changed callback signatures. Removed
+  `NimBLEService::start()` calls after the first real build flagged them as
+  deprecated (2.x auto-starts services with the server).
+- **Wi-Fi/OTA** — `WifiSync` now does a real connect → `httpUpdate.update()`
+  → disconnect flow. SSID/password/update URL are left as clearly-marked
+  `TODO_*` placeholders in `wifi_sync.cpp` — no OTA server or network exists
+  for this project yet, and inventing one would be worse than an honest gap.
+- **main.cpp** — wired buttons (polled in the display task, see "Button
+  semantics" above), the status LED, and alert-screen override (via
+  `sensorDataIsAlert()`) together; set `SensorSnapshot::dataValid` at the end
+  of the sensor task's first cycle (see "The `dataValid` gate" above).
+
+Real bugs caught by compiling incrementally instead of all at once:
+`power_mgr.h` used `uint32_t` without including `<cstdint>`; `ble_gatt.cpp`
+used `millis()`/`Serial` without including `<Arduino.h>`; and — before any of
+the above — the scaffold itself failed to build at all on Windows because of
+the `MAX_PATH` issue (see "Windows build path workaround"). None of these
+would have been caught by writing all the code first and compiling once at
+the end.
+
+Final build: 605,897 bytes flash (18.1%), 34,048 bytes RAM (10.4%) on the
+`esp32-s3-devkitc-1` target, zero warnings from project code (the SparkFun
+MAX3010x library redefining `I2C_BUFFER_LENGTH` against an ESP32 core macro
+is a third-party warning, not ours to fix).
+
+Still not done: no physical hardware to run any of this on yet — everything
+above is "compiles and is logically real" but unverified against actual
+sensors, and the bring-up checklist in readme.md §11 (ST7735 tab, PSRAM,
+double-tap tuning, etc.) is unstarted. Also open: step-counting/fall-detection
+algorithms, touch-driven UI interaction (buttons are wired, touch reads but
+isn't hooked to anything yet), Settings-screen interactivity, and the BLE
+settings-write wire format.

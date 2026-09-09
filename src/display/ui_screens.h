@@ -11,20 +11,48 @@ enum class UiScreen {
     Settings,
 };
 
-// Owns which screen is showing and redraws on change; navigated with the two
-// side buttons (readme.md #4).
+// Which value the Detail screen is currently showing; cycled by a button
+// press (see main.cpp).
+enum class DetailMetric {
+    HeartRate,
+    Spo2,
+    Temperature,
+    Steps,
+    Battery,
+};
+
+// Owns which screen is showing and redraws on each render() call; navigated
+// with the two side buttons (readme.md #4). TODO: skip the redraw when
+// nothing changed, once flicker/refresh cost is measured on real hardware.
 class UiScreens {
 public:
     void begin(Screen &screen);
+
     void show(UiScreen screen);
+    UiScreen current() const { return _current; }
+
+    void nextDetailMetric();
+
     void render(const SensorSnapshot &data);
 
 private:
+    static constexpr int kTrendPoints = 40;
+
     Screen *_screen = nullptr;
     UiScreen _current = UiScreen::Home;
+    DetailMetric _detailMetric = DetailMetric::HeartRate;
+
+    float _trend[kTrendPoints] = {};
+    int _trendIndex = 0;
+    int _trendCount = 0;
 
     void renderHome(const SensorSnapshot &data);
     void renderDetail(const SensorSnapshot &data);
     void renderAlert(const SensorSnapshot &data);
     void renderSettings();
+
+    void pushTrendSample(float value);
+    void drawTrend(int x, int y, int w, int h);
+    float detailValue(const SensorSnapshot &data) const;
+    const char *detailLabel() const;
 };

@@ -9,6 +9,11 @@
 // buttons are primary (readme.md #4).
 class TouchXpt2046 {
 public:
+    // Must be called after SPI.begin(...) in main.cpp has already set the
+    // shared bus's custom pins. begin() internally calls SPI.begin() too,
+    // but arduino-esp32's SPIClass::begin() no-ops if the bus is already
+    // initialized, so it won't reset the pins back to the peripheral's
+    // hardware defaults — verified against arduino-esp32's SPI.cpp source.
     bool begin();
     bool pressed();
 

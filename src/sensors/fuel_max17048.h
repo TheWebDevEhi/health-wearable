@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Adafruit_MAX1704X.h>
 #include <Wire.h>
 
 // MAX17048 fuel gauge: battery percentage and a low-battery flag
@@ -13,6 +14,10 @@ public:
     bool batteryLow() const { return _batteryLow; }
 
 private:
+    Adafruit_MAX17048 _fuel;
     float _batteryPercent = 0.0f;
     bool _batteryLow = false;
+
+    // TODO: tune against the actual 523450 LiPo discharge curve (readme.md #5).
+    static constexpr float kLowBatteryPercent = 15.0f;
 };

@@ -64,6 +64,11 @@ constexpr float ALERT_TEMP_HIGH_C  = 38.5f;
 // TODO: calibrate against a known-good reference (readme.md #3).
 constexpr float TEMP_SKIN_TO_BODY_OFFSET_C = 2.0f;
 
+// Idle time before the screen and chip deep-sleep (readme.md #5). TODO:
+// tune once real usage patterns are known, and expose on the Settings
+// screen (readme.md #4).
+constexpr uint32_t IDLE_TIMEOUT_MS = 15000;
+
 // ---------------------------------------------------------------------------
 // FreeRTOS task tuning — see DEVELOPMENT.md "Task model". Priorities are on
 // the standard FreeRTOS scale (0 = idle, higher = more urgent); the Arduino

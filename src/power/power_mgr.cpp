@@ -4,6 +4,7 @@
 #include <esp_sleep.h>
 
 #include "../config.h"
+#include "../display/screen.h"
 
 void PowerMgr::begin() {
     // Wake on the LIS3DH double-tap interrupt (GPIO1) or Button 1 (GPIO21).
@@ -13,15 +14,23 @@ void PowerMgr::begin() {
     // is still the current API on whatever arduino-esp32/esp-idf version this
     // builds against — newer esp-idf releases have been migrating to
     // esp_sleep_enable_ext1_wakeup_io().
-    esp_sleep_enable_ext1_wakeup(
-        (1ULL << PIN_LIS3DH_INT1) | (1ULL << PIN_BUTTON_1),
-        ESP_EXT1_WAKEUP_ANY_HIGH);
+    esp_sleep_enable_ext1_wakeup((1ULL << PIN_LIS3DH_INT1) | (1ULL << PIN_BUTTON_1),
+                                  ESP_EXT1_WAKEUP_ANY_HIGH);
     _lastActivityMs = millis();
 }
 
+void PowerMgr::attachScreen(Screen &screen) {
+    _screen = &screen;
+}
+
 void PowerMgr::update() {
-    // TODO: replace with the real idle timeout once it's exposed on the
-    // Settings screen; this is a structural stub only.
+    if (millis() - _lastActivityMs < IDLE_TIMEOUT_MS) {
+        return;
+    }
+    if (_screen != nullptr) {
+        _screen->setBacklight(0);
+    }
+    enterDeepSleep();
 }
 
 void PowerMgr::noteActivity() {
@@ -29,5 +38,5 @@ void PowerMgr::noteActivity() {
 }
 
 void PowerMgr::enterDeepSleep() {
-    esp_deep_sleep_start();
+    esp_deep_sleep_start();  // does not return
 }
