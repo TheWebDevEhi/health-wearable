@@ -106,6 +106,24 @@ reverts the pin map back to the library's default.
 `FIRMWARE_VERSION` in `src/config.h` and the `**Version:**` line at the top
 of `readme.md` move together — bump both in the same commit.
 
+### Secrets
+
+Never commit real credentials, even as a "temporary" placeholder edit.
+Wi-Fi/OTA settings live in `src/credentials.h`, which is gitignored; the
+tracked template is `src/credentials.example.h`. To set them up:
+
+```bash
+cp src/credentials.example.h src/credentials.h
+# then edit src/credentials.h with real values
+```
+
+`wifi_sync.cpp` includes `"../credentials.h"` and nothing else references
+these constants — if a future module needs its own secret, add it to both
+files rather than hardcoding it inline. `src/credentials.h` ships in this
+repo pre-seeded with the same `TODO_*` placeholders as the example, purely
+so the project builds out of the box; it still needs real values before OTA
+can work.
+
 ### Windows build path workaround
 
 Some libraries' own example filenames (e.g. SparkFun MAX3010x's

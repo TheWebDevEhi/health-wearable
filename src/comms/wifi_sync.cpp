@@ -4,17 +4,10 @@
 #include <HTTPUpdate.h>
 #include <WiFi.h>
 
+#include "../credentials.h"
+
 namespace {
-
-// TODO: no Wi-Fi network or OTA server exists for this project yet — these
-// are placeholders so the build compiles. Before this ever runs for real,
-// move actual credentials out of source control (e.g. a gitignored
-// credentials.h) rather than editing them in here (readme.md #7).
-constexpr const char *kWifiSsid = "TODO_SSID";
-constexpr const char *kWifiPassword = "TODO_PASSWORD";
-constexpr const char *kOtaUpdateUrl = "http://TODO_HOST/firmware.bin";
 constexpr uint32_t kWifiConnectTimeoutMs = 15000;
-
 }  // namespace
 
 bool WifiSync::connectWifi() {

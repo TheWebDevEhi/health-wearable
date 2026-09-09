@@ -8,3 +8,7 @@
 
 # Editor/OS cruft
 .DS_Store
+
+# Real Wi-Fi/OTA credentials — see src/credentials.example.h (tracked) and
+# DEVELOPMENT.md "Secrets". Never commit the real file.
+src/credentials.h
