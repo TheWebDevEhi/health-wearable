@@ -8,7 +8,9 @@
 // Health Thermometer (0x1809), Battery (0x180F), and a custom "Motion &
 // Control" service (UUIDs defined in ble_gatt.cpp — project-defined,
 // randomly generated, not from any BLE SIG spec; see DEVELOPMENT.md), plus a
-// rolling history buffer sent on reconnect.
+// rolling history buffer sent on reconnect. SpO2 also lives in the custom
+// service (a plain uint8 percent characteristic) rather than the BLE SIG's
+// Pulse Oximeter Service — see DEVELOPMENT.md "BLE UUIDs" for why.
 class BleGatt {
 public:
     bool begin();
@@ -52,6 +54,7 @@ private:
     NimBLECharacteristic *_heartRateChar = nullptr;
     NimBLECharacteristic *_tempChar = nullptr;
     NimBLECharacteristic *_batteryChar = nullptr;
+    NimBLECharacteristic *_spo2Char = nullptr;
     NimBLECharacteristic *_stepsChar = nullptr;
     NimBLECharacteristic *_flagsChar = nullptr;
     NimBLECharacteristic *_historyChar = nullptr;

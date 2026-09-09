@@ -160,8 +160,8 @@ sensor task completes its first cycle; `sensorDataIsAlert()` and
 
 ### BLE UUIDs
 
-The custom "Motion & Control" service and its four characteristics
-(steps, flags, history, settings-write) use randomly generated 128-bit
+The custom "Motion & Control" service and its five characteristics
+(SpO2, steps, flags, history, settings-write) use randomly generated 128-bit
 UUIDs, defined as string literals directly in `ble_gatt.cpp::begin()` —
 they're not from any BLE SIG spec, readme.md doesn't pin specific values,
 and once a companion app is built against them they must not change. Standard
@@ -169,6 +169,18 @@ services (Heart Rate `0x180D`, Health Thermometer `0x1809`, Battery
 `0x180F`) and their characteristics use the real BLE SIG 16-bit UUIDs and
 wire formats — including the Health Thermometer's IEEE-11073 32-bit FLOAT
 encoding for temperature, which is not a plain `float` cast.
+
+SpO2 specifically has no live path through a standard service: the BLE SIG's
+Pulse Oximeter Service (`0x1822`) exists but its measurement characteristic
+is a heavier multi-field IEEE-11073 structure (SpO2 + pulse rate + status
+flags), not worth the complexity here. It's instead a plain
+`NIMBLE_PROPERTY::READ | NOTIFY` uint8 percent characteristic in the custom
+service (UUID `a8fb0a1c-eb12-47a6-8ffb-d65d1dc4eaeb`), same shape as Battery
+Level — added after the fact once it became clear the original GATT table in
+readme.md §7 listed SpO2 as a device feature but never assigned it a live
+BLE path (only the history buffer carried it). If you add another vital that
+has no clean standard-service fit, follow this pattern rather than adopting
+a heavier spec service just for the sake of "standard."
 
 ### Button semantics
 

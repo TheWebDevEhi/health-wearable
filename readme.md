@@ -184,12 +184,17 @@ stateDiagram-v2
 
 **BLE**, modelled as GATT services:
 
-| Service                   | UUID        | Carries                                            |
-| -------------------------- | ----------- | --------------------------------------------------- |
-| Heart Rate                | `0x180D`    | Live bpm                                           |
-| Health Thermometer        | `0x1809`    | Temperature reading                                |
-| Battery                   | `0x180F`    | Charge percentage                                  |
-| Custom "Motion & Control" | vendor UUID | Steps, activity state, alert flags, settings write |
+| Service                   | UUID        | Carries                                                    |
+| -------------------------- | ----------- | ------------------------------------------------------------ |
+| Heart Rate                | `0x180D`    | Live bpm                                                   |
+| Health Thermometer        | `0x1809`    | Temperature reading                                        |
+| Battery                   | `0x180F`    | Charge percentage                                          |
+| Custom "Motion & Control" | vendor UUID | SpO2, steps, activity state, alert flags, settings write   |
+
+SpO2 has no dedicated BLE SIG characteristic wired up (the standard Pulse
+Oximeter Service exists but its wire format is heavier than this project
+needs), so it rides in the custom service as a plain percentage — see
+[DEVELOPMENT.md](DEVELOPMENT.md#ble-uuids) for the exact UUID and format.
 
 **Wi-Fi**, switched on only for OTA firmware updates.
 

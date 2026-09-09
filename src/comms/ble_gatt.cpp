@@ -73,6 +73,13 @@ bool BleGatt::begin() {
     // generated once (readme.md #7); keep them stable once the companion
     // PWA is built against them (see DEVELOPMENT.md).
     NimBLEService *motionService = server->createService("157a8ee9-7a76-4d8f-9fcf-b7d815451acc");
+    // SpO2 has no BLE SIG characteristic in the services above — the
+    // standard Pulse Oximeter Service (0x1822) exists but its wire format
+    // is a heavier IEEE-11073 multi-field structure; a plain uint8 percent
+    // here (same shape as Battery Level) is enough for this project. See
+    // DEVELOPMENT.md "BLE UUIDs".
+    _spo2Char = motionService->createCharacteristic("a8fb0a1c-eb12-47a6-8ffb-d65d1dc4eaeb",
+                                                      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
     _stepsChar = motionService->createCharacteristic("71682870-7fc9-4624-811d-b3de04a1731f",
                                                        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
     _flagsChar = motionService->createCharacteristic("0f0218c8-c147-4081-a7af-a9e539a3b5a6",
@@ -106,6 +113,12 @@ void BleGatt::notify(const SensorSnapshot &data) {
         _heartRateChar->setValue(hrBuf, sizeof(hrBuf));
         if (connected) {
             _heartRateChar->notify();
+        }
+
+        uint8_t spo2Level = static_cast<uint8_t>(std::max(0.0f, std::min(100.0f, data.spo2Percent)));
+        _spo2Char->setValue(&spo2Level, 1);
+        if (connected) {
+            _spo2Char->notify();
         }
     }
 
