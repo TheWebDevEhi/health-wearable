@@ -14,7 +14,13 @@ public:
 
     void setOff();
     void setOk();     // steady, low-brightness — normal operation
-    void setAlert();  // blinking red; call tick() regularly to advance it
+
+    // Blinking red; call tick() regularly to advance it. Idempotent while
+    // already in Alert mode — callers are expected to call this on every
+    // tick they want the alert state active (main.cpp does), and it must
+    // not reset the blink phase back to "on" each time or it fights
+    // tick()'s own toggle and the LED never visibly blinks.
+    void setAlert();
 
     // Advances the blink phase for setAlert(); a no-op in other states.
     // Call from the display task's own tick.

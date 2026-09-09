@@ -234,3 +234,25 @@ void UiScreens::renderSettings() {
     // TODO: wire these to actual interactive controls (readme.md #4) —
     // currently static text only.
 }
+
+void UiScreens::renderBootError(const String &failedList) {
+    if (_screen == nullptr) {
+        return;
+    }
+    TFT_eSPI &tft = _screen->raw();
+    tft.fillScreen(TFT_ORANGE);
+    tft.setTextColor(TFT_BLACK, TFT_ORANGE);
+
+    tft.setTextSize(2);
+    tft.setCursor(8, 20);
+    tft.print("INIT FAILED");
+
+    tft.setTextSize(1);
+    tft.setCursor(8, 50);
+    tft.println(failedList);
+
+    tft.setCursor(8, 130);
+    tft.println("Continuing anyway -");
+    tft.setCursor(8, 142);
+    tft.println("readings may be wrong.");
+}

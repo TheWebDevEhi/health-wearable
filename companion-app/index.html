@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <script>
+        // Applies the stored (or OS-level) theme before first paint, so
+        // there's no flash of the wrong theme while js/app.js loads as a
+        // module. Kept tiny and dependency-free on purpose — see
+        // js/theme.js for the rest of the theme logic.
+        (function () {
+            try {
+                var stored = localStorage.getItem("keis-theme");
+                var theme = stored || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+                document.documentElement.setAttribute("data-theme", theme);
+            } catch (e) {
+                /* localStorage unavailable (private mode etc.) — dark default from CSS stands */
+            }
+        })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Keis Band</title>
+    <meta name="theme-color" content="#0f172a" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="css/app.css" />
+</head>
+<body>
+    <header class="topbar">
+        <h1>Keis Band</h1>
+        <span id="status-badge" class="badge badge-disconnected">Disconnected</span>
+    </header>
+
+    <main>
+        <section id="unsupported" hidden>
+            <p>
+                This browser doesn't support Web Bluetooth. Use Chrome or Edge on
+                desktop or Android — Web Bluetooth isn't available on iOS or in
+                Safari/Firefox.
+            </p>
+        </section>
+
+        <section id="connect-screen">
+            <p>Tap connect, then pick "Keis Band" from the device list.</p>
+            <button id="connect-button" type="button">Connect</button>
+        </section>
+
+        <section id="dashboard" hidden>
+            <div id="alert-banner" class="alert-banner" hidden>Alert — check the device</div>
+
+            <div class="tile-grid">
+                <div class="tile">
+                    <span class="tile-label">Heart Rate</span>
+                    <span class="tile-value"><span id="hr-value">--</span><small>bpm</small></span>
+                </div>
+                <div class="tile">
+                    <span class="tile-label">SpO2</span>
+                    <span class="tile-value"><span id="spo2-value">--</span><small>%</small></span>
+                </div>
+                <div class="tile">
+                    <span class="tile-label">Skin Temp</span>
+                    <span class="tile-value"><span id="temp-value">--</span><small>&deg;C</small></span>
+                </div>
+                <div class="tile">
+                    <span class="tile-label">Steps</span>
+                    <span class="tile-value"><span id="steps-value">--</span></span>
+                </div>
+                <div class="tile tile-wide">
+                    <span class="tile-label">Battery</span>
+                    <div class="battery-bar"><div id="battery-fill" class="battery-fill"></div></div>
+                    <span class="tile-value"><span id="battery-value">--</span><small>%</small></span>
+                </div>
+            </div>
+
+            <section class="history-section">
+                <h2>Recent history <small>(sent on connect)</small></h2>
+                <canvas id="history-canvas" width="600" height="140"></canvas>
+                <p id="history-empty" class="muted">No history received yet.</p>
+            </section>
+
+            <section class="settings-section">
+                <h2>Settings</h2>
+
+                <div class="setting-row">
+                    <label for="theme-select">Theme</label>
+                    <select id="theme-select">
+                        <option value="dark">Dark</option>
+                        <option value="light">Light</option>
+                    </select>
+                </div>
+
+                <div class="setting-row">
+                    <label for="device-name-input">Device name</label>
+                    <input type="text" id="device-name-input" maxlength="20" placeholder="Keis Band" />
+                    <button id="device-name-save" type="button" class="secondary setting-button">Save</button>
+                </div>
+
+                <div class="setting-group setting-admin">
+                    <h3>Wi-Fi (OTA) credentials <span class="muted">— admin password required</span></h3>
+                    <label for="wifi-ssid-input">Network name (SSID)</label>
+                    <input type="text" id="wifi-ssid-input" maxlength="32" autocomplete="off" />
+                    <label for="wifi-password-input">Password</label>
+                    <input type="password" id="wifi-password-input" maxlength="64" autocomplete="off" />
+                    <button id="wifi-save" type="button" class="secondary setting-button">Save Wi-Fi credentials</button>
+                </div>
+
+                <div class="setting-group setting-admin">
+                    <h3>Firmware update <span class="muted">— admin password required</span></h3>
+                    <p class="muted">
+                        Uses the Wi-Fi credentials above. No OTA server exists for
+                        this project yet, so this will fail until one does — see
+                        DEVELOPMENT.md on the firmware side.
+                    </p>
+                    <button id="ota-start" type="button" class="secondary setting-button">Start update</button>
+                </div>
+
+                <p id="settings-status" class="muted" aria-live="polite"></p>
+            </section>
+
+            <button id="disconnect-button" type="button" class="secondary">Disconnect</button>
+        </section>
+    </main>
+
+    <dialog id="password-dialog">
+        <form method="dialog" id="password-form">
+            <p id="password-dialog-message">Enter admin password</p>
+            <input type="password" id="password-input" autocomplete="off" />
+            <div class="dialog-actions">
+                <button type="button" id="password-cancel" class="secondary">Cancel</button>
+                <button type="submit">OK</button>
+            </div>
+        </form>
+    </dialog>
+
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

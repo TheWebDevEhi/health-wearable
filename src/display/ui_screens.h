@@ -35,6 +35,14 @@ public:
 
     void render(const SensorSnapshot &data);
 
+    // One-shot screen for setup() to call directly if a sensor failed to
+    // initialize — outside the normal Home/Detail/Alert/Settings state
+    // machine, since it runs before any task (and thus any SensorSnapshot)
+    // exists. Added so a miswired sensor doesn't fail completely silently
+    // (readme.md #11) — previously nothing surfaced this beyond a Serial
+    // log nobody without a debug cable would ever see.
+    void renderBootError(const String &failedList);
+
 private:
     static constexpr int kTrendPoints = 40;
 

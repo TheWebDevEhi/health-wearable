@@ -4,6 +4,7 @@
 
 #include "config.h"
 #include "sensor_data.h"
+#include "settings_store.h"
 
 #include "sensors/fuel_max17048.h"
 #include "sensors/motion_lis3dh.h"
@@ -32,6 +33,7 @@ TouchXpt2046 g_touch;
 UiScreens g_ui;
 StatusLed g_statusLed;
 
+SettingsStore g_settings;
 BleGatt g_ble;
 WifiSync g_wifi;
 PowerMgr g_power;
@@ -152,12 +154,36 @@ void powerTask(void *) {
     }
 }
 
+// Polls for a BLE-triggered OTA request (settings command 0x04) and runs it.
+// Deliberately its own task, not folded into bleTask or powerTask:
+// WifiSync::startOtaUpdate() blocks for a Wi-Fi connect timeout plus however
+// long the actual download takes, and it must never block bleTask (BLE
+// notifications would stall) or powerTask (idle/sleep handling would stall).
+void otaTask(void *) {
+    for (;;) {
+        if (g_ble.consumeOtaRequest()) {
+            // An in-progress OTA must not be interrupted by deep sleep; this
+            // only resets the idle timer once at the start, not throughout
+            // the download — a very slow transfer could still in theory lose
+            // the race against CONNECTED_IDLE_TIMEOUT_MS. Good enough until
+            // there's a real OTA server to actually measure transfer time
+            // against (readme.md #7).
+            g_power.noteActivity();
+            Serial.println("[OTA] update requested, starting...");
+            bool ok = g_wifi.startOtaUpdate();
+            Serial.printf("[OTA] update %s\n", ok ? "succeeded" : "failed");
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 }  // namespace
 
 void setup() {
     Serial.begin(115200);
 
     sensorDataInit();
+    g_settings.begin();
 
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
     SPI.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI, PIN_TFT_CS);
@@ -165,25 +191,50 @@ void setup() {
     pinMode(PIN_BUTTON_1, INPUT_PULLUP);
     pinMode(PIN_BUTTON_2, INPUT_PULLUP);
 
-    g_ppg.begin(Wire);
-    g_temp.begin(Wire);
-    g_motion.begin(Wire);
-    g_motion.configureDoubleTapWake();
-    g_fuel.begin(Wire);
-
+    // Display first, so init failures below have somewhere to be shown —
+    // not just a Serial log nobody without a debug cable would ever see
+    // (readme.md #11; this was a real end-to-end finding, not a
+    // hypothetical: a miswired sensor used to fail completely silently).
     g_screen.begin();
-    g_touch.begin();
     g_ui.begin(g_screen);
     g_statusLed.begin();
 
-    g_ble.begin();
+    String failedInit;
+    auto checkInit = [&failedInit](const char *name, bool ok) {
+        if (ok) {
+            return;
+        }
+        Serial.printf("[INIT] %s failed to initialize\n", name);
+        if (failedInit.length() > 0) {
+            failedInit += ", ";
+        }
+        failedInit += name;
+    };
+
+    checkInit("PPG", g_ppg.begin(Wire));
+    checkInit("Temp", g_temp.begin(Wire));
+    checkInit("Motion", g_motion.begin(Wire));
+    g_motion.configureDoubleTapWake();
+    checkInit("Fuel gauge", g_fuel.begin(Wire));
+    checkInit("Touch", g_touch.begin());
+
+    g_ble.attachSettingsStore(g_settings);
+    checkInit("BLE", g_ble.begin());
+    g_wifi.attachSettingsStore(g_settings);
     g_power.begin();
     g_power.attachScreen(g_screen);
+    g_power.attachBle(g_ble);
+
+    if (failedInit.length() > 0) {
+        g_ui.renderBootError(failedInit);
+        delay(3000);  // one-time pause so there's actually time to read it
+    }
 
     xTaskCreate(sensorTask, "sensor", TASK_STACK_SENSOR, nullptr, TASK_PRIORITY_SENSOR, nullptr);
     xTaskCreate(displayTask, "display", TASK_STACK_DISPLAY, nullptr, TASK_PRIORITY_DISPLAY, nullptr);
     xTaskCreate(bleTask, "ble", TASK_STACK_BLE, nullptr, TASK_PRIORITY_BLE, nullptr);
     xTaskCreate(powerTask, "power", TASK_STACK_POWER, nullptr, TASK_PRIORITY_POWER, nullptr);
+    xTaskCreate(otaTask, "ota", TASK_STACK_OTA, nullptr, TASK_PRIORITY_OTA, nullptr);
 }
 
 void loop() {

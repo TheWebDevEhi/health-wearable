@@ -2,7 +2,8 @@
 
 #include <cstdint>
 
-class Screen;  // see attachScreen()
+class Screen;   // see attachScreen()
+class BleGatt;  // see attachBle()
 
 // Deep sleep, double-tap/button wake, and backlight timeout
 // (readme.md #5, #6).
@@ -15,6 +16,12 @@ public:
     // off just before deep sleep.
     void attachScreen(Screen &screen);
 
+    // Lets update() use CONNECTED_IDLE_TIMEOUT_MS instead of
+    // IDLE_TIMEOUT_MS while a client is connected — without this, the band
+    // deep-sleeps and drops an active BLE connection ~15s after the last
+    // button press, which defeats the point of being connected at all.
+    void attachBle(BleGatt &ble);
+
     // Called periodically by the power task; enters deep sleep once the
     // idle timeout elapses.
     void update();
@@ -25,6 +32,7 @@ public:
 
 private:
     Screen *_screen = nullptr;
+    BleGatt *_ble = nullptr;
     uint32_t _lastActivityMs = 0;
 
     void enterDeepSleep();

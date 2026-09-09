@@ -196,13 +196,25 @@ Oximeter Service exists but its wire format is heavier than this project
 needs), so it rides in the custom service as a plain percentage — see
 [DEVELOPMENT.md](DEVELOPMENT.md#ble-uuids) for the exact UUID and format.
 
+The settings-write characteristic accepts device-name, Wi-Fi-credential,
+request-history, and start-OTA writes from the companion app — see
+[DEVELOPMENT.md](DEVELOPMENT.md#settings-wire-protocol) for the exact byte
+format, and note there is no authentication on this write at the BLE layer
+itself (the app's admin-password gate is client-side only). History is
+sent only in response to an explicit request, not automatically on
+connect — an earlier version auto-pushed it and lost the notifications to
+a timing race with the client's own GATT subscription.
+
 **Wi-Fi**, switched on only for OTA firmware updates.
 
 **Companion app** — a Web Bluetooth PWA, served over HTTPS, using
 `navigator.bluetooth` to pair and read/write the GATT characteristics above.
 Every connection needs a fresh user tap (no silent reconnect), and the link
 drops when the tab closes — the band's rolling history covers the gap by
-re-sending recent readings on reconnect.
+re-sending recent readings on reconnect. Lives in [companion-app/](companion-app/)
+— see its own [README](companion-app/README.md) and
+[DEVELOPMENT.md](companion-app/DEVELOPMENT.md) for how to run it and its
+conventions.
 
 ```mermaid
 sequenceDiagram
@@ -421,19 +433,47 @@ not stubs — for every subsystem in this brief:
 - **Display** — ST7735 via TFT_eSPI, XPT2046 touch (read but not yet hooked
   to UI actions), all four screens (Home/Detail/Alert/Settings) drawing real
   content, and the WS2812 status LED.
-- **Power** — idle-timeout deep sleep with double-tap/button EXT1 wake.
+- **Power** — idle-timeout deep sleep with double-tap/button EXT1 wake, and
+  a separate, longer timeout while a BLE client is connected so the band
+  doesn't drop an active connection out from under itself.
 - **BLE** — a real NimBLE GATT server: standard Heart Rate/Health
   Thermometer/Battery services plus the custom "Motion & Control" service,
-  with a rolling history buffer sent on reconnect.
-- **Wi-Fi/OTA** — a real connect → update → disconnect flow, gated behind
-  placeholder network/server credentials (none exist yet for this project).
+  with a rolling history buffer sent on explicit client request (not
+  auto-pushed — see [DEVELOPMENT.md](DEVELOPMENT.md#settings-wire-protocol)
+  for why that changed), and a settings write path (device name, Wi-Fi
+  credentials) persisted in NVS so it survives deep sleep.
+- **Wi-Fi/OTA** — a real connect → update → disconnect flow. Credentials
+  come from `SettingsStore` (app-configurable) falling back to
+  `credentials.h` placeholders (no real network/server exists yet for this
+  project); the OTA server URL itself is still compile-time only.
+
+A companion Web Bluetooth PWA also exists — see
+[companion-app/](companion-app/) — with a working connect flow, live
+dashboard, and a Settings section (device rename, Wi-Fi credentials and an
+OTA trigger behind a client-side admin-password gate, dark/light theme).
+
+Two rounds of end-to-end logic review (tracing task/protocol timing, not
+just compiling) found seven real runtime bugs; all seven are now fixed — see
+[DEVELOPMENT.md](DEVELOPMENT.md) for the detail on each:
+
+- The alert status LED was structured so it could never actually blink
+- The BLE history backfill was lost to a subscription-timing race almost every time
+- The idle timer had no concept of an active BLE connection, so the band could deep-sleep mid-session
+- `BleGatt`'s history/connection-count/OTA-request state was touched from two different FreeRTOS tasks with no synchronization — now guarded by a mutex
+- No sensor's `begin()` return value was ever checked, so a miswired sensor failed completely silently — `setup()` now shows an on-device error screen if anything fails to initialize
+- OTA had no trigger anywhere in the firmware or the companion app — both sides now have one (settings command `0x04`, a dedicated `otaTask`, and a "Start update" button)
+- The companion app's local history array was never cleared on reconnect and grew unboundedly
 
 What's still open: step-counting and fall-detection are placeholder
-heuristics, not tuned algorithms; the Settings screen and BLE settings-write
-have no interaction wired yet; and — most importantly — **none of this has
-run on physical hardware**. See [DEVELOPMENT.md](DEVELOPMENT.md) for the full
-implementation log and the conventions behind these decisions, and
-[§11](#11-bring-up-checklist) for what's next once real hardware is in hand.
+heuristics, not tuned algorithms; the on-device Settings screen (drawn on
+the ST7735) still has no interaction wired, only the companion app's does;
+the BLE settings write has no authentication at the transport level (see
+[DEVELOPMENT.md](DEVELOPMENT.md#settings-wire-protocol) — the companion
+app's admin password is a client-side deterrent only); and — most
+importantly — **none of this has run on physical hardware**. See
+[DEVELOPMENT.md](DEVELOPMENT.md) for the full implementation log and the
+conventions behind these decisions, and [§11](#11-bring-up-checklist) for
+what's next once real hardware is in hand.
 
 ---
 
@@ -444,3 +484,5 @@ implementation log and the conventions behind these decisions, and
 3. **Fuel-gauge I2C level** — check whether the MAX17048 module's I2C pull-ups reference VBAT or a regulated 3.3 V, and add a level shifter if needed before joining the shared bus.
 4. **PSRAM** — print `ESP.getPsramSize()` to confirm what's fitted.
 5. **Double-tap tuning** — set the LIS3DH tap threshold and timing so a deliberate double-tap wakes the screen but ordinary arm movement does not, and confirm the GPIO1 interrupt brings the chip out of deep sleep.
+6. **BLE advertising restart mid-connection** — `BleGatt::applyDeviceName()` calls `stop()`/`start()` on advertising from inside the GATT write callback, while the client that just sent that write is still connected. Confirm this doesn't disrupt the active connection on real NimBLE/real hardware.
+7. **NimBLE host task stack headroom** — `sendHistoryBacklog()` stack-allocates a 600-byte snapshot array on NimBLE's own host task (stack size set by the NimBLE-Arduino/esp-idf build, not this project's own task config). Confirm it doesn't run close to that task's stack limit when triggered.

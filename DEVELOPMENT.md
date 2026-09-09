@@ -80,6 +80,7 @@ Arduino core's own `loopTask` runs at priority 1):
 | Power   | 3        | Must respond promptly to wake/sleep triggers |
 | BLE     | 2        | Notifications tolerate some jitter           |
 | Display | 1        | Least time-critical                          |
+| OTA     | 1        | Rare, long-blocking (Wi-Fi/HTTP) — must never share a task with anything time-sensitive |
 
 ### Logging
 
@@ -181,6 +182,81 @@ readme.md §7 listed SpO2 as a device feature but never assigned it a live
 BLE path (only the history buffer carried it). If you add another vital that
 has no clean standard-service fit, follow this pattern rather than adopting
 a heavier spec service just for the sake of "standard."
+
+### Settings persistence (NVS)
+
+`SettingsStore` (`src/settings_store.*`) holds the device name and Wi-Fi
+credentials — the only settings that can be changed at runtime so far (via
+BLE writes, see below). It persists them in NVS through the `Preferences`
+library rather than a plain member variable, because the device deep-sleeps
+regularly (`power/power_mgr.*`), which wipes ordinary RAM; anything that
+must survive that has to live somewhere else. Namespace is `"keis"`, keys
+are `"name"`/`"ssid"`/`"pass"`. Falls back to `config.h`'s
+`DEFAULT_DEVICE_NAME` and `credentials.h`'s placeholders until the app has
+actually written something — those two files remain the compile-time
+defaults, `SettingsStore` is what can override them without reflashing.
+
+If you add another runtime-editable setting, follow this same shape: a
+getter/setter pair on `SettingsStore` that reads from a RAM cache but writes
+through to NVS immediately, not a value that only lives on the stack of
+whatever function received it.
+
+### Settings wire protocol
+
+The settings characteristic (custom UUID, `NIMBLE_PROPERTY::WRITE`) accepts
+a small tagged binary protocol, parsed in
+`BleGatt::SettingsCallbacks::onWrite()`:
+
+| Byte(s) | Meaning |
+| --- | --- |
+| `[0]` | command: `0x01` = set device name, `0x02` = set Wi-Fi credentials, `0x03` = request history, `0x04` = start OTA update |
+| **Command 0x01** | `[1..]` = UTF-8 name, 1-20 bytes |
+| **Command 0x02** | `[1]` = ssidLen (uint8) · `[2..2+ssidLen)` = SSID · next byte = passLen (uint8) · following passLen bytes = password |
+| **Command 0x03** | no payload — triggers `sendHistoryBacklog()` immediately |
+| **Command 0x04** | no payload — sets a flag `otaTask` (in `main.cpp`) polls once a second |
+
+Command `0x03` exists because history used to be pushed automatically from
+`ServerCallbacks::onConnect()`, which fires before a client has finished
+GATT-subscribing to the history characteristic — the notifications were
+being sent to no subscriber and silently dropped. The companion app now
+sends `0x03` as the last step of its connect flow, once every characteristic
+(history included) is actually subscribed; see `ble.js`'s `requestHistory()`.
+
+Command `0x04` deliberately does *not* call `WifiSync::startOtaUpdate()`
+directly from `onWrite()` — that runs on NimBLE's own host task, and
+`startOtaUpdate()` blocks for a Wi-Fi connect timeout plus however long an
+actual download takes, which would stall BLE entirely for that whole span.
+Instead it just sets `BleGatt::_otaRequested` (under `_mutex`, same as
+everything else shared across tasks in this class);
+`BleGatt::consumeOtaRequest()` test-and-clears it, polled once a second by a
+new, dedicated `otaTask` in `main.cpp` — see "Task model" above for why it's
+its own task rather than folded into an existing one.
+
+Length caps (`kMaxDeviceNameLen`/`kMaxSsidLen`/`kMaxPasswordLen` in
+`ble_gatt.cpp`) are 20/32/64 bytes — WPA2's real max password length is 63
+bytes, rounded up to 64. `NimBLEDevice::setMTU(247)` is set in `begin()` so
+the largest possible Wi-Fi-credentials write (1+1+32+1+64 = 99 bytes) fits
+in one ATT write without needing reassembly logic this code doesn't have —
+the default 23-byte MTU would not have been enough.
+
+There is **no authentication on this BLE write** — anyone within BLE range
+who connects can write these commands. The "admin password" the companion
+app prompts for before sending Wi-Fi credentials is a client-side-only gate
+(see `companion-app/js/admin-auth.js`); the firmware doesn't know it exists
+and doesn't check anything. If that gap matters for a real deployment,
+NimBLE's `NIMBLE_PROPERTY::WRITE_ENC` (requiring pairing/bonding) is the
+real fix — it wasn't added here because it's a materially bigger feature
+than what was asked for, not because it was overlooked.
+
+A device name change calls `NimBLEDevice::setDeviceName()` +
+`advertising->setName()` and restarts advertising so the new name shows up
+in scans immediately; a Wi-Fi credentials change just persists — it takes
+effect on the next OTA attempt since Wi-Fi is only brought up on demand
+(readme.md §7), so there's nothing to reconnect immediately.
+
+The companion app's encoder (`companion-app/js/settings-protocol.js`) must
+stay byte-for-byte in sync with this table — see that file's own
+DEVELOPMENT.md for the JS side.
 
 ### Button semantics
 
@@ -318,3 +394,199 @@ double-tap tuning, etc.) is unstarted. Also open: step-counting/fall-detection
 algorithms, touch-driven UI interaction (buttons are wired, touch reads but
 isn't hooked to anything yet), Settings-screen interactivity, and the BLE
 settings-write wire format.
+
+**2026-09-09 — Rename + real settings.** Two changes, prompted by the user:
+the BLE device name changed from "BEME Band" to "Keis Band"
+(`DEFAULT_DEVICE_NAME` in `config.h`), and the settings characteristic went
+from a logging-only stub to a real, persisted protocol.
+
+- `src/settings_store.*` — new module, NVS-backed via `Preferences` (see
+  "Settings persistence (NVS)" above). Added because device name and Wi-Fi
+  credentials both need to survive deep sleep, which a RAM-only value
+  wouldn't.
+- `BleGatt` — added `attachSettingsStore()` (called before `begin()`, since
+  the initial advertised name comes from there), the settings write parser
+  (see "Settings wire protocol" above), `applyDeviceName()` (renames live +
+  restarts advertising), and `applyWifiCredentials()` (persists; takes
+  effect on next OTA attempt). Also widened the BLE MTU to 247 — the
+  previous default (23 bytes) wasn't enough for a full-length Wi-Fi
+  credentials write, which the settings protocol now actually needs to
+  carry.
+- `WifiSync` — reads Wi-Fi credentials from `SettingsStore` each connection
+  attempt instead of the `credentials.h` constants directly;
+  `credentials.h` is now only the fallback default, not the only source.
+- `main.cpp` — instantiates and wires `SettingsStore` before anything that
+  depends on it.
+
+Deliberately out of scope, and documented as such rather than silently
+skipped: the BLE settings write itself has no authentication — the
+companion app's "admin password" is a client-side-only deterrent (see
+DEVELOPMENT.md there), not something the firmware knows about or enforces.
+Real protection would mean `NIMBLE_PROPERTY::WRITE_ENC` and a
+pairing/bonding flow, which wasn't part of what was asked for.
+
+Rebuilt clean after this change (NimBLE recompiled from scratch both times
+in this session for reasons not fully understood — possibly cache
+invalidation from the new `Preferences`/NVS/filesystem dependencies pulling
+in different build flags; harmless, just slower iteration, ~5 minutes per
+full rebuild instead of under a minute for a single-file change).
+
+**2026-09-09 — Three bugs fixed from an end-to-end logic review.** Not
+compile errors — the project already built clean — but real runtime bugs
+found by tracing task/protocol timing rather than trusting "it compiles."
+
+- **Status LED never actually blinked during an alert.** `main.cpp`'s
+  display task calls `StatusLed::setAlert()` on every 200ms tick while an
+  alert is active, not just once on entry. `setAlert()` used to
+  unconditionally set `_blinkOn = true` and light the LED — so the very
+  next line, `tick()`, immediately flipped it back off in the same
+  iteration, every iteration. Net effect: the LED never stayed visibly lit.
+  Fixed by making `setAlert()` a no-op once already in `Mode::Alert`
+  (`status_led.cpp`), so repeated calls don't fight `tick()`'s own toggle.
+  No caller changes needed.
+- **BLE history backfill likely never reached a real client.** The
+  firmware used to push the whole history backlog from
+  `ServerCallbacks::onConnect()`, which fires at BLE link-layer connect —
+  before the companion app has finished subscribing to the history
+  characteristic (it was the 7th of 7 sequential characteristic
+  subscriptions in `ble.js`'s `connect()`). BLE doesn't queue notifications
+  for an unsubscribed characteristic; they're just dropped. Fixed by adding
+  a third settings command, `0x03` = request history (no payload) — see
+  "Settings wire protocol" above, now updated. The firmware only sends the
+  backlog when explicitly asked via this command
+  (`SettingsCallbacks::onWrite`), and `onConnect()` no longer pushes it
+  automatically. `ble.js`'s `connect()` now calls the new
+  `requestHistory()` method as its last step, after every characteristic
+  (history included) is subscribed — verified in-browser that
+  `encodeRequestHistory()` produces the single byte the firmware parser
+  expects.
+- **The band would deep-sleep out from under an active BLE connection.**
+  `PowerMgr`'s idle timer only ever reset on a button press
+  (`noteActivity()`), so with the default 15s `IDLE_TIMEOUT_MS` the band
+  would drop an active, in-use BLE connection ~15 seconds after the last
+  button press — including while a phone was actively reading live data.
+  User's call on the fix (asked rather than guessed, since it's a
+  battery-life-vs-reliability tradeoff): added a separate, longer
+  `CONNECTED_IDLE_TIMEOUT_MS` (5 minutes, unmeasured starting guess) that
+  `PowerMgr::update()` uses instead of `IDLE_TIMEOUT_MS` whenever
+  `BleGatt::clientConnected()` is true (wired via a new `attachBle()`,
+  matching the existing `attachScreen()` pattern). Deliberately still
+  finite rather than "never sleep while connected" — a backgrounded or
+  stuck phone connection would otherwise keep the band awake indefinitely
+  and drain the battery.
+
+Not fixed here, and not asked for at the time — remain open findings from
+the same review: `BleGatt`'s `_history`/`_connectedCount` are touched from
+both `bleTask` and NimBLE's own host task (via
+`ServerCallbacks`/`SettingsCallbacks`) with no mutex, unlike
+`sensor_data.cpp`'s correctly-guarded pattern — a real if narrow-window data
+race. No sensor `begin()` return value is checked in `main.cpp`, so a
+miswired sensor fails silently with no error surfaced anywhere. The
+companion app's local `history` array is never cleared on
+disconnect/reconnect, so it grows unboundedly across a long session. OTA
+still has no trigger anywhere in the firmware (Settings-screen "Sync now"
+is still static text) — unrelated to the three bugs above, not touched.
+
+**2026-09-09 — The four remaining findings, fixed on request.**
+
+- **`BleGatt` data race.** Added `SemaphoreHandle_t _mutex` (created in
+  `begin()`), guarding every member touched from more than one task: the
+  history ring buffer (`_history`/`_historyHead`/`_historyCount`),
+  `_connectedCount`, and the new `_otaRequested` flag below.
+  `clientConnected()` moved out of the header (it now takes the lock, so it
+  can no longer be a trivial inline getter). `sendHistoryBacklog()` copies
+  the buffered entries into a stack-local snapshot under the lock, then
+  calls `notify()` on each *outside* the lock — holding a mutex across
+  NimBLE's own radio I/O would block `pushHistory()`/`clientConnected()` on
+  other tasks for no reason. `onConnect`/`onDisconnect` (NimBLE host task)
+  and `pushHistory()`/`clientConnected()` (bleTask, and powerTask via
+  `PowerMgr`) all now go through the same lock.
+- **Unchecked `begin()` return values.** `main.cpp`'s `setup()` now
+  initializes the display *first* specifically so failures have somewhere
+  to be shown, then wraps every sensor/BLE/touch `begin()` call in a small
+  `checkInit()` lambda that both `Serial.printf`s the failure and appends
+  the name to a `failedInit` string. If anything failed, `UiScreens::
+  renderBootError()` (new) shows an orange screen listing what, and
+  `setup()` pauses 3 seconds before continuing — the device still boots
+  either way (a hard failure to boot over a bad sensor would be worse than
+  degraded readings), but now there's an on-device signal, not just a
+  Serial log nobody without a debug cable would ever see. Found and fixed a
+  self-inflicted bug while doing this: the first draft called
+  `g_touch.begin()` twice (once unconditionally, once inside `checkInit`) —
+  caught before it shipped, not after.
+- **OTA now has an actual trigger.** New settings command `0x04` (see
+  "Settings wire protocol" above) sets `BleGatt::_otaRequested` rather than
+  blocking `onWrite()`'s own task; a new dedicated `otaTask` (see "Task
+  model" above) polls `consumeOtaRequest()` once a second and calls
+  `WifiSync::startOtaUpdate()` when set, logging the result. Also calls
+  `g_power.noteActivity()` right before starting, so `PowerMgr`'s idle timer
+  doesn't put the device to sleep mid-download — though only once, not
+  throughout the transfer, so a sufficiently slow download could still in
+  theory lose that race; not worth solving until there's a real OTA server
+  to measure actual transfer time against. The companion app gained a
+  matching "Start update" button (behind the same admin-password gate as
+  Wi-Fi credentials) — see its own DEVELOPMENT.md.
+- **Companion app's unbounded history array** — fixed entirely on that
+  side; see its DEVELOPMENT.md.
+
+All four verified: firmware rebuilt clean (RAM 17.0%/55,592 B, Flash
+31.2%/1,043,865 B — both up from before, expected given TLS/HTTP-update
+code now sits on a live path via `otaTask` rather than being dead code), and
+the two new BLE commands (`0x03`... already covered, `0x04`) verified
+in-browser the same way as the others: encode in JS, confirm the single
+byte matches what the firmware parser expects.
+
+**2026-09-09 — Fresh firmware-only re-analysis (build + logic trace, no new
+bugs to fix, one open question finally resolved).** Rebuilt clean, then
+re-traced every file touched in the last two rounds of fixes with fresh
+eyes, specifically hunting for regressions the fixes themselves might have
+introduced.
+
+- **Resolved, not a bug**: previously flagged twice (in chat, not written
+  down until now) as "worth verifying" — does `SettingsStore::begin()`'s
+  `Preferences::begin(kNamespace, /*readOnly=*/true)` work on a genuinely
+  first-ever boot, when the "keis" namespace doesn't exist yet? Checked
+  against arduino-esp32's actual `Preferences.cpp` rather than continuing
+  to hedge: `nvs_open()` in read-only mode on a missing namespace does fail
+  (contradicts what a first, less careful search suggested — worth noting
+  that AI-summarized search results disagreed with the primary source
+  here, which is exactly why the second check happened), but every
+  `getString()` independently guards on `Preferences`' own `_started` flag
+  and falls back to the given default regardless. So first boot correctly
+  produces the `config.h`/`credentials.h` defaults even though `begin()`'s
+  return value is (intentionally, now documented as such in
+  `settings_store.cpp`) never checked.
+- **Traced the new mutex for deadlock risk**: no function that holds
+  `BleGatt::_mutex` calls another function that also takes it — confirmed
+  by reading every lock/unlock pair in `ble_gatt.cpp` end to end. No
+  reentrant acquisition anywhere (FreeRTOS's plain `xSemaphoreCreateMutex()`
+  isn't recursive, so this would deadlock instantly if it existed).
+- **Confirmed `PowerMgr::_lastActivityMs` correctly does *not* need the same
+  mutex treatment** as `BleGatt`'s state, despite being written from three
+  tasks (`pollButtons()` on displayTask, `otaTask`, and read from
+  `powerTask`). Worth writing down explicitly since it's the natural next
+  question after the `BleGatt` fix: a single 32-bit-aligned scalar write
+  doesn't tear on this hardware, and "note the most recent activity
+  timestamp" has no correctness requirement beyond eventual consistency —
+  unlike `BleGatt`'s history buffer, which is multiple fields that must
+  stay consistent *as a set*.
+- **Newly surfaced, not fixed**: `BleGatt::sendHistoryBacklog()`'s
+  stack-allocated `HistoryEntry snapshot[kHistoryCapacity]` (600 bytes) runs
+  on NimBLE's own host task when triggered by a settings write — that
+  task's stack size is configured by the NimBLE-Arduino/esp-idf build, not
+  by anything in this project's own `xTaskCreate` calls, so it's genuinely
+  unverified whether 600 bytes plus the rest of that call's frame fits
+  comfortably. Not changed (moving it off the stack would mean a
+  permanently-allocated 600-byte buffer for a rarely-used path, a worse
+  trade-off on a RAM-constrained target without evidence it's actually a
+  problem) — flagging it for bring-up rather than guessing at a fix.
+- **Re-surfaced, not new**: `applyDeviceName()` calls
+  `advertising->stop()`/`start()` synchronously from inside the GATT write
+  callback, while the client that just sent the write is — by definition —
+  still connected. Whether restarting advertising mid-connection disrupts
+  that connection on real NimBLE/real hardware is genuinely unknown from
+  reading the code; add to the bring-up checklist.
+
+Nothing here changed behavior — this pass was read-only except for the one
+clarifying comment added to `settings_store.cpp`. Rebuilt clean afterward to
+confirm that comment-only change didn't disturb anything.

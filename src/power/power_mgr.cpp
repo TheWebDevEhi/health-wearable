@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <esp_sleep.h>
 
+#include "../comms/ble_gatt.h"
 #include "../config.h"
 #include "../display/screen.h"
 
@@ -23,8 +24,15 @@ void PowerMgr::attachScreen(Screen &screen) {
     _screen = &screen;
 }
 
+void PowerMgr::attachBle(BleGatt &ble) {
+    _ble = &ble;
+}
+
 void PowerMgr::update() {
-    if (millis() - _lastActivityMs < IDLE_TIMEOUT_MS) {
+    bool connected = (_ble != nullptr) && _ble->clientConnected();
+    uint32_t timeout = connected ? CONNECTED_IDLE_TIMEOUT_MS : IDLE_TIMEOUT_MS;
+
+    if (millis() - _lastActivityMs < timeout) {
         return;
     }
     if (_screen != nullptr) {

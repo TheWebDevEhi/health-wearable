@@ -5,6 +5,10 @@
 // Bump alongside the "Version:" line at the top of readme.md.
 #define FIRMWARE_VERSION "0.1.0"
 
+// Default BLE device name, used only until SettingsStore has something
+// persisted (readme.md #7) — the companion app can rename it at runtime.
+constexpr const char *DEFAULT_DEVICE_NAME = "Keis Band";
+
 // ---------------------------------------------------------------------------
 // Pin map — mirrors readme.md #8.3. This is the single source of truth for
 // GPIO numbers; do not hardcode pin numbers anywhere else in the firmware.
@@ -69,6 +73,15 @@ constexpr float TEMP_SKIN_TO_BODY_OFFSET_C = 2.0f;
 // screen (readme.md #4).
 constexpr uint32_t IDLE_TIMEOUT_MS = 15000;
 
+// While a BLE client is connected, PowerMgr uses this longer timeout
+// instead of IDLE_TIMEOUT_MS — otherwise the band would deep-sleep and
+// drop the connection ~15s after the last button press even during active
+// use (a real bug found during end-to-end review, not a hypothetical).
+// Still finite rather than "never sleep while connected" so a
+// backgrounded/stuck phone connection can't keep the band awake forever
+// and drain the battery — 5 minutes is a starting guess, not measured.
+constexpr uint32_t CONNECTED_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+
 // ---------------------------------------------------------------------------
 // FreeRTOS task tuning — see DEVELOPMENT.md "Task model". Priorities are on
 // the standard FreeRTOS scale (0 = idle, higher = more urgent); the Arduino
@@ -78,8 +91,12 @@ constexpr uint32_t TASK_STACK_SENSOR  = 4096;
 constexpr uint32_t TASK_STACK_DISPLAY = 3072;
 constexpr uint32_t TASK_STACK_BLE     = 4096;
 constexpr uint32_t TASK_STACK_POWER   = 2048;
+// Generous: WiFiClientSecure/HTTPUpdate pull in TLS, which is stack-hungry.
+constexpr uint32_t TASK_STACK_OTA     = 8192;
 
 constexpr uint8_t TASK_PRIORITY_SENSOR  = 3;
 constexpr uint8_t TASK_PRIORITY_POWER   = 3;
 constexpr uint8_t TASK_PRIORITY_BLE     = 2;
 constexpr uint8_t TASK_PRIORITY_DISPLAY = 1;
+// Rare and not time-critical — same tier as display.
+constexpr uint8_t TASK_PRIORITY_OTA     = 1;

@@ -5,14 +5,22 @@
 #include <WiFi.h>
 
 #include "../credentials.h"
+#include "../settings_store.h"
 
 namespace {
 constexpr uint32_t kWifiConnectTimeoutMs = 15000;
 }  // namespace
 
+void WifiSync::attachSettingsStore(SettingsStore &settings) {
+    _settings = &settings;
+}
+
 bool WifiSync::connectWifi() {
+    String ssid = (_settings != nullptr) ? _settings->wifiSsid() : String(kWifiSsid);
+    String password = (_settings != nullptr) ? _settings->wifiPassword() : String(kWifiPassword);
+
     WiFi.mode(WIFI_STA);
-    WiFi.begin(kWifiSsid, kWifiPassword);
+    WiFi.begin(ssid.c_str(), password.c_str());
 
     uint32_t start = millis();
     while (WiFi.status() != WL_CONNECTED) {

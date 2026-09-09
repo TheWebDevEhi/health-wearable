@@ -6,6 +6,9 @@
 #include <cmath>
 #include <cstring>
 
+#include "../config.h"
+#include "../settings_store.h"
+
 namespace {
 
 // IEEE-11073 32-bit FLOAT: top byte is an 8-bit two's-complement exponent,
@@ -19,21 +22,44 @@ int32_t encodeIeee11073Float(float value, int8_t exponent) {
     return (static_cast<int32_t>(static_cast<uint8_t>(exponent)) << 24) | (mantissa & 0x00FFFFFF);
 }
 
+// Settings characteristic wire format — see DEVELOPMENT.md "Settings wire
+// protocol" for the full spec and the matching companion-app encoder.
+constexpr uint8_t kCmdSetDeviceName = 0x01;
+constexpr uint8_t kCmdSetWifiCredentials = 0x02;
+constexpr uint8_t kCmdRequestHistory = 0x03;
+constexpr uint8_t kCmdStartOta = 0x04;
+constexpr size_t kMaxDeviceNameLen = 20;
+constexpr size_t kMaxSsidLen = 32;
+constexpr size_t kMaxPasswordLen = 64;
+
 }  // namespace
 
 void BleGatt::ServerCallbacks::onConnect(NimBLEServer *server, NimBLEConnInfo &connInfo) {
     (void)server;
     (void)connInfo;
-    _owner._connectedCount++;
-    _owner.sendHistoryBacklog();
+    // Runs on NimBLE's own host task, not bleTask — _connectedCount is also
+    // read from there (via clientConnected()) and from powerTask, so it's
+    // mutex-guarded like everything else in this class touched from more
+    // than one task (see the class comment in ble_gatt.h).
+    if (xSemaphoreTake(_owner._mutex, portMAX_DELAY) == pdTRUE) {
+        _owner._connectedCount++;
+        xSemaphoreGive(_owner._mutex);
+    }
+    // History is NOT sent here — see the class comment in ble_gatt.h for
+    // why (this used to be sendHistoryBacklog(), which raced the client's
+    // own GATT subscription and silently lost the notifications). The
+    // client requests it explicitly once ready.
 }
 
 void BleGatt::ServerCallbacks::onDisconnect(NimBLEServer *server, NimBLEConnInfo &connInfo, int reason) {
     (void)server;
     (void)connInfo;
     (void)reason;
-    if (_owner._connectedCount > 0) {
-        _owner._connectedCount--;
+    if (xSemaphoreTake(_owner._mutex, portMAX_DELAY) == pdTRUE) {
+        if (_owner._connectedCount > 0) {
+            _owner._connectedCount--;
+        }
+        xSemaphoreGive(_owner._mutex);
     }
     // NimBLE stops advertising once connected; readme.md #7 requires a
     // fresh user tap to reconnect, but the peripheral still needs to be
@@ -43,17 +69,79 @@ void BleGatt::ServerCallbacks::onDisconnect(NimBLEServer *server, NimBLEConnInfo
 
 void BleGatt::SettingsCallbacks::onWrite(NimBLECharacteristic *characteristic, NimBLEConnInfo &connInfo) {
     (void)connInfo;
-    // TODO: no settings wire format is defined yet (readme.md #4 lists
-    // brightness/alert limits as adjustable, but not their BLE encoding) —
-    // this only logs what arrived until that's designed.
     std::string value = characteristic->getValue();
-    Serial.printf("[BLE] settings write, %u bytes\n", static_cast<unsigned>(value.size()));
+    if (value.empty()) {
+        return;
+    }
+
+    uint8_t command = static_cast<uint8_t>(value[0]);
+    if (command == kCmdSetDeviceName) {
+        std::string name = value.substr(1);
+        if (name.empty() || name.size() > kMaxDeviceNameLen) {
+            Serial.println("[BLE] settings: invalid device name length");
+            return;
+        }
+        _owner.applyDeviceName(String(name.c_str()));
+        return;
+    }
+
+    if (command == kCmdSetWifiCredentials) {
+        // [0]=command [1]=ssidLen [2..2+ssidLen)=ssid [..]=passLen [..]=password
+        if (value.size() < 3) {
+            Serial.println("[BLE] settings: malformed Wi-Fi credentials write");
+            return;
+        }
+        size_t pos = 1;
+        uint8_t ssidLen = static_cast<uint8_t>(value[pos]);
+        pos += 1;
+        if (ssidLen > kMaxSsidLen || value.size() < pos + ssidLen + 1) {
+            Serial.println("[BLE] settings: malformed Wi-Fi credentials write");
+            return;
+        }
+        std::string ssid = value.substr(pos, ssidLen);
+        pos += ssidLen;
+
+        uint8_t passLen = static_cast<uint8_t>(value[pos]);
+        pos += 1;
+        if (passLen > kMaxPasswordLen || value.size() < pos + passLen) {
+            Serial.println("[BLE] settings: malformed Wi-Fi credentials write");
+            return;
+        }
+        std::string password = value.substr(pos, passLen);
+
+        _owner.applyWifiCredentials(String(ssid.c_str()), String(password.c_str()));
+        return;
+    }
+
+    if (command == kCmdRequestHistory) {
+        _owner.sendHistoryBacklog();
+        return;
+    }
+
+    if (command == kCmdStartOta) {
+        _owner.requestOta();
+        return;
+    }
+
+    Serial.printf("[BLE] settings: unknown command 0x%02X\n", command);
+}
+
+void BleGatt::attachSettingsStore(SettingsStore &settings) {
+    _settings = &settings;
 }
 
 bool BleGatt::begin() {
+    _mutex = xSemaphoreCreateMutex();
     _bootMs = millis();
 
-    NimBLEDevice::init("BEME Band");
+    String initialName = (_settings != nullptr) ? _settings->deviceName() : String(DEFAULT_DEVICE_NAME);
+
+    NimBLEDevice::init(initialName.c_str());
+    // Wi-Fi credentials (up to 32+64 bytes) plus the command/length header
+    // exceed the default 23-byte ATT MTU; request a larger one so the
+    // settings characteristic write in one piece rather than needing
+    // reassembly this code doesn't implement.
+    NimBLEDevice::setMTU(247);
     NimBLEServer *server = NimBLEDevice::createServer();
     server->setCallbacks(&_serverCallbacks);
     _server = server;
@@ -91,7 +179,7 @@ bool BleGatt::begin() {
     settingsChar->setCallbacks(&_settingsCallbacks);
 
     NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
-    advertising->setName("BEME Band");
+    advertising->setName(initialName.c_str());
     advertising->addServiceUUID(hrService->getUUID());
     advertising->addServiceUUID(motionService->getUUID());
     advertising->enableScanResponse(true);
@@ -164,6 +252,15 @@ void BleGatt::notify(const SensorSnapshot &data) {
     pushHistory(data);
 }
 
+bool BleGatt::clientConnected() {
+    bool connected = false;
+    if (xSemaphoreTake(_mutex, portMAX_DELAY) == pdTRUE) {
+        connected = _connectedCount > 0;
+        xSemaphoreGive(_mutex);
+    }
+    return connected;
+}
+
 void BleGatt::pushHistory(const SensorSnapshot &data) {
     HistoryEntry entry;
     entry.ageMs = millis() - _bootMs;
@@ -171,26 +268,85 @@ void BleGatt::pushHistory(const SensorSnapshot &data) {
     entry.spo2PercentX10 = static_cast<int16_t>(lroundf(data.spo2Percent * 10.0f));
     entry.skinTempCx10 = static_cast<int16_t>(lroundf(data.skinTempC * 10.0f));
 
-    _history[_historyHead] = entry;
-    _historyHead = (_historyHead + 1) % kHistoryCapacity;
-    if (_historyCount < kHistoryCapacity) {
-        _historyCount++;
+    if (xSemaphoreTake(_mutex, portMAX_DELAY) == pdTRUE) {
+        _history[_historyHead] = entry;
+        _historyHead = (_historyHead + 1) % kHistoryCapacity;
+        if (_historyCount < kHistoryCapacity) {
+            _historyCount++;
+        }
+        xSemaphoreGive(_mutex);
     }
 }
 
 void BleGatt::sendHistoryBacklog() {
-    if (_historyChar == nullptr || _historyCount == 0) {
+    if (_historyChar == nullptr) {
         return;
+    }
+
+    // Snapshot under the lock, then notify outside it — NimBLE's own
+    // notify() calls can take a while (radio I/O), and holding our mutex
+    // for that whole span would block pushHistory()/clientConnected() on
+    // other tasks for no reason.
+    HistoryEntry snapshot[kHistoryCapacity];
+    int count = 0;
+    if (xSemaphoreTake(_mutex, portMAX_DELAY) == pdTRUE) {
+        count = _historyCount;
+        int oldest = (_historyHead - _historyCount + kHistoryCapacity) % kHistoryCapacity;
+        for (int i = 0; i < count; i++) {
+            snapshot[i] = _history[(oldest + i) % kHistoryCapacity];
+        }
+        xSemaphoreGive(_mutex);
     }
 
     // TODO: fires every buffered entry back-to-back with no pacing or
     // client ack; verify against real Web Bluetooth behaviour at bring-up
     // and add throttling/indications if notifications get dropped
     // (readme.md #6).
-    int oldest = (_historyHead - _historyCount + kHistoryCapacity) % kHistoryCapacity;
-    for (int i = 0; i < _historyCount; i++) {
-        int idx = (oldest + i) % kHistoryCapacity;
-        _historyChar->setValue(reinterpret_cast<uint8_t *>(&_history[idx]), sizeof(HistoryEntry));
+    for (int i = 0; i < count; i++) {
+        _historyChar->setValue(reinterpret_cast<uint8_t *>(&snapshot[i]), sizeof(HistoryEntry));
         _historyChar->notify();
     }
+}
+
+void BleGatt::applyDeviceName(const String &name) {
+    if (_settings != nullptr) {
+        _settings->setDeviceName(name);
+    }
+    NimBLEDevice::setDeviceName(name.c_str());
+    NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
+    advertising->setName(name.c_str());
+    // Restart so the new name actually shows up in scan results; harmless
+    // to call stop() when advertising wasn't running.
+    advertising->stop();
+    advertising->start();
+    Serial.printf("[BLE] device name changed to \"%s\"\n", name.c_str());
+}
+
+void BleGatt::applyWifiCredentials(const String &ssid, const String &password) {
+    if (_settings != nullptr) {
+        _settings->setWifiCredentials(ssid, password);
+    }
+    // Takes effect on the next OTA attempt — WifiSync reads from
+    // SettingsStore each time rather than caching, and Wi-Fi is only
+    // brought up on demand (readme.md #7), so there's nothing to reconnect
+    // here.
+    Serial.println("[BLE] Wi-Fi credentials updated");
+}
+
+void BleGatt::requestOta() {
+    if (xSemaphoreTake(_mutex, portMAX_DELAY) == pdTRUE) {
+        _otaRequested = true;
+        xSemaphoreGive(_mutex);
+    }
+    Serial.println("[BLE] OTA update requested");
+}
+
+bool BleGatt::consumeOtaRequest() {
+    bool requested = false;
+    if (xSemaphoreTake(_mutex, portMAX_DELAY) == pdTRUE) {
+        requested = _otaRequested;
+        _otaRequested = false;
+        xSemaphoreGive(_mutex);
+    }
+    return requested;
 }
