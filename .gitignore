@@ -1,0 +1,10 @@
+# PlatformIO build/library caches. Redirected outside the project by
+# platformio.ini's [platformio] section (see DEVELOPMENT.md "Windows build
+# path workaround"), but ignored here too in case that ever changes or
+# someone builds without picking up that config.
+.pio/
+.pio-build/
+.pio-libdeps/
+
+# Editor/OS cruft
+.DS_Store
