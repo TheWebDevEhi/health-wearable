@@ -302,7 +302,8 @@ Created `platformio.ini` and the `src/` tree from
 - `src/comms/*` — `BleGatt` and `WifiSync` stubs matching the GATT services
   and OTA-on-demand behaviour in readme.md §7.
 - `src/power/*` — `PowerMgr`, with the EXT1 deep-sleep wake sources
-  (LIS3DH INT1 on GPIO1, Button 1 on GPIO21) wired for real since they're
+  (LIS3DH INT1 on GPIO1, Button 1 — originally GPIO21, reassigned to GPIO3
+  on 2026-09-11, see the dated entry below) wired for real since they're
   fixed by the RTC-GPIO hardware constraint (readme.md §5, §8.3); the idle
   timeout logic itself is still a TODO.
 - `src/main.cpp` — bus init, module `begin()` calls, and the four FreeRTOS
@@ -590,3 +591,43 @@ introduced.
 Nothing here changed behavior — this pass was read-only except for the one
 clarifying comment added to `settings_store.cpp`. Rebuilt clean afterward to
 confirm that comment-only change didn't disturb anything.
+
+**2026-09-11 — Button pins moved off pogo-pin-only pads.**
+Cross-checked `config.h`'s pin map against the ESP32-S3 SuperMini's actual
+pinout reference (espboards.dev, plus a saved copy of the same page).
+Everything electrically checked out — no collision with the ESP32-S3's real
+strapping pins (GPIO0/3/45/46) or the flash/PSRAM-reserved range
+(GPIO26–32) — but the SuperMini's physical header only breaks out
+GPIO1–13 (plus GPIO15–17, confirmed separately). GPIO0 isn't exposed at
+all: the board's own pinout page notes onboard "Reset/Boot buttons," which
+explains it — GPIO0 is wired internally to that button rather than left
+floating.
+
+That's a real problem for `PIN_BUTTON_1` (was GPIO21) and `PIN_BUTTON_2`
+(was GPIO47): both sat on bottom-side pads with no header access, needing a
+pogo-pin fixture (not available) or a hand-soldered wire directly to the
+pad. Since GPIO1–13 was already almost entirely claimed by
+display/touch/I2C/LIS3DH-wake wiring, only GPIO3 was free in that range —
+not enough for two buttons on its own.
+
+Reassigned:
+- `PIN_BUTTON_1`: GPIO21 → **GPIO3**. Still RTC-capable (0–21), so it keeps
+  working as the EXT1 deep-sleep wake source (`power_mgr.cpp`). GPIO3
+  selects the JTAG interface at boot — harmless for normal operation, but
+  don't hold the button down while powering on or resetting.
+- `PIN_BUTTON_2`: GPIO47 → **GPIO15**, confirmed header-accessible on a
+  closer read of the board's pinout reference (outside the original
+  GPIO1–13 figure this doc started from). RTC-capable too, but not wired as
+  a wake source — Button 1 alone was judged sufficient.
+
+`PIN_MAX30102_INT` (GPIO40) and `PIN_MAX17048_ALRT` (GPIO38) were left
+alone: neither is read anywhere in the firmware yet (declared in `config.h`
+only), and there were no header pins left to move them to after the button
+reassignment. GPIO40 additionally overlaps JTAG MTDO — worth reconsidering
+placement if/when interrupt-driven sensor reads actually get implemented,
+not before.
+
+Updated `readme.md` §8 (both wiring diagrams, the consolidated pin-map
+diagram, the §8.3 table, and a new "physical access" note explaining the
+header-vs-pad distinction) and `pin-map.drawio` to match. Rebuilt clean
+after the `config.h`/`power_mgr.cpp` changes.

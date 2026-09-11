@@ -8,10 +8,11 @@
 #include "../display/screen.h"
 
 void PowerMgr::begin() {
-    // Wake on the LIS3DH double-tap interrupt (GPIO1) or Button 1 (GPIO21).
+    // Wake on the LIS3DH double-tap interrupt (GPIO1) or Button 1 (GPIO3).
     // Both are within the ESP32-S3's RTC GPIO range (0-21), which EXT1
-    // wakeup requires; Button 2 (GPIO47) is not RTC-capable and so is not a
-    // wake source (readme.md #8.3). TODO: confirm esp_sleep_enable_ext1_wakeup
+    // wakeup requires. Button 2 (GPIO15) is RTC-capable too but isn't wired
+    // as a wake source here — Button 1 alone was judged sufficient
+    // (readme.md #8.3). TODO: confirm esp_sleep_enable_ext1_wakeup
     // is still the current API on whatever arduino-esp32/esp-idf version this
     // builds against — newer esp-idf releases have been migrating to
     // esp_sleep_enable_ext1_wakeup_io().

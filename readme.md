@@ -274,10 +274,49 @@ flowchart TB
     MCU -->|GPIO7 T_CS| XPT
     MCU -->|GPIO2 T_IRQ| XPT
 
-    MCU -->|GPIO21| BTN1["Button 1<br/>to GND, pull-up"]
-    MCU -->|GPIO47| BTN2["Button 2<br/>to GND, pull-up"]
+    MCU -->|GPIO3| BTN1["Button 1<br/>to GND, pull-up"]
+    MCU -->|GPIO15| BTN2["Button 2<br/>to GND, pull-up"]
     MCU --- LEDW["Status LED<br/>WS2812, GPIO48"]
 ```
+
+**Full pin map, single view (power + both buses + GPIO):**
+
+```mermaid
+flowchart TB
+    BATT["LiPo 523450<br/>3.0-4.2 V"] -->|B+/B-| CHG["TP4056"]
+    CHG -->|VBAT| BUCK["TPS63000<br/>buck-boost"]
+    BUCK -->|3.3 V| MCU(("ESP32-S3<br/>SuperMini"))
+
+    MCU -->|GPIO8 SDA| I2C{{I2C bus}}
+    MCU -->|GPIO9 SCL| I2C
+    I2C --- LIS["LIS3DH<br/>0x18 / 0x19"]
+    I2C --- MLX["MLX90614<br/>0x5A"]
+    I2C --- MAX17["MAX17048<br/>0x36"]
+    I2C --- MAX30["MAX30102<br/>0x57"]
+    MCU -->|GPIO1 INT1| LIS
+    MCU -->|GPIO40 INT| MAX30
+    MCU -->|GPIO38 ALRT| MAX17
+
+    MCU -->|GPIO12 SCK| SPI{{SPI bus}}
+    MCU -->|GPIO11 MOSI| SPI
+    MCU -->|GPIO13 MISO| SPI
+    SPI --- LCD["ST7735 panel"]
+    SPI --- XPT["XPT2046 touch"]
+    MCU -->|GPIO10 CS| LCD
+    MCU -->|GPIO4 DC| LCD
+    MCU -->|GPIO5 RESET| LCD
+    MCU -->|GPIO6 BL PWM| LCD
+    MCU -->|GPIO7 T_CS| XPT
+    MCU -->|GPIO2 T_IRQ| XPT
+
+    MCU -->|GPIO3| BTN1["Button 1<br/>GND, pull-up"]
+    MCU -->|GPIO15| BTN2["Button 2<br/>GND, pull-up"]
+    MCU -->|GPIO48| LEDW["Status LED<br/>WS2812"]
+```
+
+A schematic-style version of the same connections, editable in
+[diagrams.net](https://app.diagrams.net) (drawio), lives at
+[`pin-map.drawio`](pin-map.drawio).
 
 ### 8.1 Display module pinout
 
@@ -328,15 +367,30 @@ flowchart TB
 | LIS3DH INT1 (double-tap wake) | —                        | 1    | RTC-capable pin, required for deep-sleep wake |
 | I2C data                      | sensor SDA              | 8    | Shared by all four sensors                    |
 | I2C clock                     | sensor SCL              | 9    | Shared by all four sensors                    |
-| Button 1                      | —                        | 21   | To GND, internal pull-up; also a wake source  |
-| Button 2                      | —                        | 47   | To GND, internal pull-up                      |
+| Button 1                      | —                        | 3    | To GND, internal pull-up; also a wake source; JTAG-select strap — don't hold at power-on/reset |
+| Button 2                      | —                        | 15   | To GND, internal pull-up                      |
 | Status LED                    | on-board WS2812         | 48   |                                                |
-| MAX30102 INT                  | —                        | 40   | Optional                                       |
-| MAX17048 ALRT                 | —                        | 38   | Optional low-battery flag                     |
+| MAX30102 INT                  | —                        | 40   | Optional; not yet wired to firmware logic; also shares JTAG MTDO — revisit before use |
+| MAX17048 ALRT                 | —                        | 38   | Optional low-battery flag; not yet wired to firmware logic |
 
-**Pins to keep clear:** GPIO 0, 45, 46 (boot strapping), GPIO 3 (strapping),
-GPIO 19/20 (USB), GPIO 43/44 (serial debug). GPIO 26–32 are tied to flash/PSRAM
-and are not brought out. The map above avoids all of these.
+**Physical access, not just electrical:** the ESP32-S3 SuperMini's core
+header only covers **GPIO1–13**, plus GPIO15–17 confirmed separately
+accessible. GPIO0 isn't exposed at all — it's wired internally to the
+board's own onboard BOOT button, not just unbroken-out. Everything else used
+above and not in that set — GPIO21, 38, 40, 47, 48 — sits on bottom-side
+pads with no header access, needing a hand-soldered wire (a pogo-pin fixture
+would help for repeated testing but isn't required for a permanent
+connection). Since GPIO1–13 is almost entirely claimed by the
+display/touch/I2C/wake-sensor wiring below, GPIO3 and GPIO15 are what's left
+for the two buttons — moved here specifically so neither needs the
+pad-soldering workaround. Double-check GPIO15 against the physical unit
+before final assembly; it wasn't in this doc's original "exposed" figure and
+was added based on a closer look at the board's pinout reference.
+
+**Pins to keep clear:** GPIO 0, 45, 46 (boot strapping), GPIO 19/20 (USB),
+GPIO 43/44 (serial debug). GPIO 26–32 are tied to flash/PSRAM and are not
+brought out. GPIO3 is also a boot-time strapping pin (JTAG interface select)
+but is deliberately used above for Button 1 — see the note in the table.
 
 ### 8.4 I2C addresses
 

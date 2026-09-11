@@ -1,0 +1,157 @@
+<mxfile host="app.diagrams.net" modified="2026-09-10T00:00:00.000Z" agent="Keis Band firmware repo" version="24.7.17" type="device">
+  <diagram name="Pin Map" id="keis-pin-map">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Power chain -->
+        <mxCell id="batt" value="LiPo 523450&lt;br&gt;3.0-4.2 V" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="140" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="chg" value="TP4056&lt;br&gt;charger" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="40" y="140" width="140" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="buck" value="TPS63000&lt;br&gt;buck-boost" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="40" y="240" width="140" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_batt_chg" value="B+/B-" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="batt" target="chg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_chg_buck" value="VBAT" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="chg" target="buck">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- MCU -->
+        <mxCell id="mcu" value="ESP32-S3&#10;SuperMini" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;verticalAlign=top;spacingTop=16;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="40" width="140" height="640" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_buck_mcu" value="3.3 V" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.03;" edge="1" parent="1" source="buck" target="mcu">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- I2C bus + sensors -->
+        <mxCell id="i2cbus" value="I2C bus" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="620" y="140" width="110" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="lis3dh" value="LIS3DH&#10;0x18 / 0x19" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="810" y="40" width="180" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="mlx90614" value="MLX90614&#10;0x5A" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="810" y="120" width="180" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="max17048" value="MAX17048&#10;0x36" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="810" y="200" width="180" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="max30102" value="MAX30102&#10;0x57" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="810" y="280" width="180" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_sda" value="GPIO8 SDA" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.05;entryX=0;entryY=0.3;fontSize=11;" edge="1" parent="1" source="mcu" target="i2cbus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_scl" value="GPIO9 SCL" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.12;entryX=0;entryY=0.7;fontSize=11;" edge="1" parent="1" source="mcu" target="i2cbus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_bus_lis" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=none;exitX=1;exitY=0.2;entryX=0;entryY=0.5;" edge="1" parent="1" source="i2cbus" target="lis3dh">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bus_mlx" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=none;exitX=1;exitY=0.4;entryX=0;entryY=0.5;" edge="1" parent="1" source="i2cbus" target="mlx90614">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bus_max17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=none;exitX=1;exitY=0.6;entryX=0;entryY=0.5;" edge="1" parent="1" source="i2cbus" target="max17048">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bus_max30" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=none;exitX=1;exitY=0.8;entryX=0;entryY=0.5;" edge="1" parent="1" source="i2cbus" target="max30102">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_int1" value="GPIO1 INT1&#10;(double-tap wake)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.19;entryX=0.5;entryY=0;fontSize=11;" edge="1" parent="1" source="mcu" target="lis3dh">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_int40" value="GPIO40 INT&#10;(optional)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.26;entryX=0.5;entryY=0;fontSize=11;" edge="1" parent="1" source="mcu" target="max30102">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_alrt38" value="GPIO38 ALRT&#10;(optional)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.33;entryX=0.5;entryY=0;fontSize=11;" edge="1" parent="1" source="mcu" target="max17048">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- SPI bus + display/touch -->
+        <mxCell id="spibus" value="SPI bus" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="620" y="460" width="110" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="lcd" value="ST7735 panel&#10;(display)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;verticalAlign=top;spacingTop=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="810" y="400" width="190" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="touch" value="XPT2046&#10;(touch)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;verticalAlign=top;spacingTop=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="810" y="560" width="190" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_sck" value="GPIO12 SCK" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.40;entryX=0;entryY=0.2;fontSize=11;" edge="1" parent="1" source="mcu" target="spibus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_mosi" value="GPIO11 MOSI" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.47;entryX=0;entryY=0.5;fontSize=11;" edge="1" parent="1" source="mcu" target="spibus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_miso" value="GPIO13 MISO" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.54;entryX=0;entryY=0.8;fontSize=11;" edge="1" parent="1" source="mcu" target="spibus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_bus_lcd" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=none;exitX=1;exitY=0.3;entryX=0;entryY=0.12;" edge="1" parent="1" source="spibus" target="lcd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bus_touch" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=none;exitX=1;exitY=0.7;entryX=0;entryY=0.25;" edge="1" parent="1" source="spibus" target="touch">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_cs" value="GPIO10 CS" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.61;entryX=0;entryY=0.35;fontSize=11;" edge="1" parent="1" source="mcu" target="lcd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_dc" value="GPIO4 DC" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.68;entryX=0;entryY=0.55;fontSize=11;" edge="1" parent="1" source="mcu" target="lcd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_rst" value="GPIO5 RESET" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.75;entryX=0;entryY=0.75;fontSize=11;" edge="1" parent="1" source="mcu" target="lcd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bl" value="GPIO6 BL&#10;(PWM)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.82;entryX=0;entryY=0.95;fontSize=11;" edge="1" parent="1" source="mcu" target="lcd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_tcs" value="GPIO7 T_CS" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.89;entryX=0;entryY=0.55;fontSize=11;" edge="1" parent="1" source="mcu" target="touch">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_tirq" value="GPIO2 T_IRQ" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.95;entryX=0;entryY=0.8;fontSize=11;" edge="1" parent="1" source="mcu" target="touch">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Buttons + status LED -->
+        <mxCell id="btn1" value="Button 1&#10;to GND, pull-up" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="320" y="740" width="150" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="btn2" value="Button 2&#10;to GND, pull-up" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="320" y="810" width="150" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="ledw" value="Status LED&#10;on-board WS2812" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="320" y="880" width="150" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_btn1" value="GPIO3&#10;(RTC-capable, also a wake source;&#10;JTAG-select strap - don't hold at boot)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.3;exitY=1;entryX=0.5;entryY=0;fontSize=11;" edge="1" parent="1" source="mcu" target="btn1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_btn2" value="GPIO15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;fontSize=11;" edge="1" parent="1" source="mcu" target="btn2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_led" value="GPIO48" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.7;exitY=1;entryX=0.5;entryY=0;fontSize=11;" edge="1" parent="1" source="mcu" target="ledw">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Title -->
+        <mxCell id="title" value="Keis Band — ESP32-S3 SuperMini pin map (readme.md #8.3)" style="text;html=1;fontSize=20;fontStyle=1;align=left;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="-40" width="700" height="40" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -9,6 +9,7 @@
             "name": "PlatformIO",
             "includePath": [
                 "C:/Users/CoderOfNG/Desktop/hardware/Wearable PGD/Firmware/src",
+                "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src",
                 "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/HTTPUpdate/src",
                 "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/Update/src",
                 "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/HTTPClient/src",
@@ -242,7 +243,6 @@
                 "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/I2S/src",
                 "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/Insights/src",
                 "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/NetBIOS/src",
-                "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src",
                 "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/RainMaker/src",
                 "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/SD/src",
                 "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/SD_MMC/src",
@@ -257,6 +257,7 @@
                 "limitSymbolsToIncludedHeaders": true,
                 "path": [
                     "C:/Users/CoderOfNG/Desktop/hardware/Wearable PGD/Firmware/src",
+                    "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src",
                     "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/HTTPUpdate/src",
                     "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/Update/src",
                     "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/HTTPClient/src",
@@ -490,7 +491,6 @@
                     "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/I2S/src",
                     "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/Insights/src",
                     "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/NetBIOS/src",
-                    "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/Preferences/src",
                     "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/RainMaker/src",
                     "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/SD/src",
                     "C:/Users/CoderOfNG/.platformio/packages/framework-arduinoespressif32/libraries/SD_MMC/src",
