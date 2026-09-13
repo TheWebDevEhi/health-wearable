@@ -10,7 +10,15 @@ bool MotionLis3dh::begin(TwoWire &bus) {
     if (!_lis.begin(I2C_ADDR_LIS3DH)) {
         return false;
     }
-    _lis.setRange(LIS3DH_RANGE_2_G);
+    // +/-8g, not the library's +/-2g default: a real fall's impact spike
+    // commonly exceeds 2g, and kImpactThresholdG (2.5g) below would clip
+    // at a 2g ceiling before ever reading a value that could cross it —
+    // fall detection would then never actually fire. +/-8g gives headroom
+    // above 2.5g with margin for tuning it higher later, and doesn't hurt
+    // the much smaller kMovementThresholdG/kFreeFallThresholdG readings —
+    // the LIS3DH's 12-bit high-res output still resolves well under 0.1g
+    // per step at this range.
+    _lis.setRange(LIS3DH_RANGE_8_G);
     return true;
 }
 

@@ -849,3 +849,21 @@ catch it again.
 
 Updated readme.md's status line (§10) to describe these as real
 heuristics needing tuning, not unimplemented stubs. Rebuilt clean.
+
+**Same-day follow-up: caught a real range-clipping bug on re-check.**
+`begin()` was still configuring the sensor for the library's `LIS3DH_RANGE_2_G`
+default — set before fall detection existed, back when the largest
+threshold in play was `kStepThresholdG` at 1.2g. `kImpactThresholdG` (2.5g)
+exceeds that ±2g ceiling: a real fall's impact spike would clip at 2g
+before the code could ever read a value crossing 2.5g, so fall detection
+as written could never actually fire, regardless of how well-tuned the
+threshold itself was. Missed this when the heuristic was first written;
+caught it on a deliberate re-check rather than by a user report or a
+build failure — the compiler has no way to catch a sensor range/threshold
+mismatch like this, it's a logic error, not a type error.
+
+Fixed by switching to `LIS3DH_RANGE_8_G`. Checked this doesn't cost
+`kMovementThresholdG`/`kFreeFallThresholdG` meaningful precision — the
+LIS3DH's 12-bit high-res output still resolves well under 0.1g/step at
+±8g, comfortably fine-grained relative to those two thresholds (0.15g and
+0.4g). Rebuilt clean.
