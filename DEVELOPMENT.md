@@ -1251,3 +1251,48 @@ uses. Rebuilt clean; not yet reflashed/re-verified on hardware as of
 this entry — that's the next step, along with confirming the I2C
 speed fix (`ppg_max30102.cpp`, same day, above) actually gets Temp
 initializing now too.
+
+**Same day, fifth hardware issue: reflashed both fixes above — all
+three real sensors (PPG, Temp, Motion) confirmed initializing clean.**
+BLE also connected and subscribed successfully. But the companion app
+still showed only `--`. Added a temporary diagnostic
+(`Serial.printf` at the top of `BleGatt::notify()`, both the
+early-return and the normal path — readme.md #11, remove once real
+values are confirmed reaching the app) to see exactly what the
+firmware believed on each tick. It never printed at all, not even
+before the phone connected — which is itself the finding, since
+`bleTask` should tick once a second from very early in boot regardless
+of any BLE client.
+
+**Root cause: the physical display/touch panel isn't connected yet**
+(bring-up is proceeding sensor-first), and `setup()`'s call order means
+`g_ble.begin()` — which starts BLE advertising and brings the whole
+GATT server up — runs *before* the blocking touch-calibration step.
+NimBLE's own internal host task handles connections independently of
+any of this project's own FreeRTOS tasks, so the phone could connect
+and subscribe successfully even while `setup()` itself was still stuck
+waiting inside `applyStoredOrNewCalibration()` — meaning `bleTask`,
+`sensorTask`, and every other task hadn't been created yet at all. Not
+a bug in the BLE path; a real gap in `waitForTouchOrSkip()`, whose own
+existing comment already claimed "a broken or unwired touch panel must
+not be able to hang boot forever" — true for a *broken* panel (the
+button still escapes that), but not for a **not-yet-connected** one
+with nobody standing by to press the button during unattended bring-up.
+
+Fixed by adding a 10-second timeout to `waitForTouchOrSkip()`
+(`main.cpp`) alongside the existing touch/button race — logs
+`[INIT] Touch calibration timed out, skipping` and returns false (same
+as the button path) rather than blocking indefinitely. This is the
+real fix for the function's own stated guarantee, not a new one.
+Confirmed via earlier logs that `TouchXpt2046::begin()` (the
+XPT2046_Touchscreen library) returns true regardless of whether a
+panel is actually wired — it never fails init from a check-worthy
+error, so `touchOk` has been true throughout this bring-up and the
+calibration wait was always going to run.
+
+Once this reaches `setup()`'s task-creation block, `bleTask` starts
+ticking and the `[BLE DEBUG]` diagnostic added above should start
+printing real sensor values once a second — which directly doubles as
+what was asked for (seeing sensor readings over serial without the
+display connected), no separate serial-dump feature needed. Rebuilt
+clean; not yet reflashed/re-verified on hardware as of this entry.

@@ -248,16 +248,26 @@ void otaTask(void *) {
     }
 }
 
-// Blocks until the touch panel is pressed, or the button is pressed as an
-// escape hatch — a broken or unwired touch panel must not be able to hang
-// boot forever waiting for a touch that will never come. Returns false if
-// the button won the race.
+// Blocks until the touch panel is pressed, the button is pressed, or a
+// timeout elapses — a broken, unwired, or simply not-yet-connected touch
+// panel must not be able to hang boot forever waiting for a touch that will
+// never come. The button alone didn't actually satisfy that (a real gap
+// found during bring-up without a display connected at all: nothing to tap,
+// and the button requires a person standing by to press it) — the timeout
+// is the real "never hangs forever" guarantee this function's own comment
+// already promised. Returns false if the button or the timeout won the race.
 bool waitForTouchOrSkip() {
+    constexpr uint32_t kWaitTimeoutMs = 10000;
+    uint32_t startMs = millis();
     for (;;) {
         if (g_touch.pressed()) {
             return true;
         }
         if (digitalRead(PIN_BUTTON_1) == LOW) {
+            return false;
+        }
+        if (millis() - startMs >= kWaitTimeoutMs) {
+            Serial.println("[INIT] Touch calibration timed out, skipping");
             return false;
         }
         delay(20);
