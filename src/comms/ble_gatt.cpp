@@ -190,10 +190,24 @@ bool BleGatt::begin() {
 
 void BleGatt::notify(const SensorSnapshot &data) {
     if (_server == nullptr || !data.dataValid) {
+        // TEMPORARY bring-up diagnostic (readme.md #11): confirms whether
+        // this early-return is why the companion app sees no values.
+        // Remove once real values are confirmed reaching the app.
+        Serial.printf("[BLE DEBUG] notify() skipped: server=%p dataValid=%d\n",
+                       static_cast<void *>(_server), data.dataValid);
         return;
     }
 
     bool connected = clientConnected();
+
+    // TEMPORARY bring-up diagnostic (readme.md #11): prints exactly what
+    // this tick believes and is about to send, so a stuck "--" on the
+    // companion app can be isolated to firmware vs. app/BLE-link. Remove
+    // once real values are confirmed reaching the app.
+    Serial.printf(
+        "[BLE DEBUG] connected=%d ppgSignalValid=%d hr=%.1f spo2=%.1f temp=%.1f steps=%lu batt=%.1f\n",
+        connected, data.ppgSignalValid, data.heartRateBpm, data.spo2Percent, data.skinTempC,
+        static_cast<unsigned long>(data.stepCount), data.batteryPercent);
 
     if (data.ppgSignalValid) {
         uint8_t hrBuf[2] = {0x00,
