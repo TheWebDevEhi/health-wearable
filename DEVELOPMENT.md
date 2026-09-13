@@ -976,3 +976,145 @@ comment already documents that navigation state should keep working
 during an alert.
 
 Rebuilt clean after the change.
+
+**2026-09-13 — First real hardware flash: fixed a flash-size/partition
+mismatch causing an immediate boot-loop crash.**
+
+First time this firmware ran on the actual ESP32-S3 SuperMini unit
+(everything before this was build-verified and logic-traced only, no
+physical hardware existed). It crash-looped every boot, ~240ms in,
+before `setup()` got meaningfully far:
+
+```
+E (210) spi_flash: Detected size(4096k) smaller than the size in the
+binary image header(8192k). Probe failed.
+assert failed: do_core_init startup.c:328 (flash_ret == ESP_OK)
+```
+
+(preceded by `E (240) esp_core_dump_flash: Core dump flash config is
+corrupted! CRC=... instead of 0x0` — secondary noise: the panic
+handler's own attempt to persist crash details to the coredump
+partition, which also can't succeed once flash init itself has
+failed. A full chip erase (`pio run --target erase`) was tried first
+and did *not* fix it, correctly ruling out stale-partition-data as the
+cause and pointing at something structural.)
+
+**Root cause, confirmed against the actually-installed toolchain, not
+guessed:** `boards/esp32-s3-devkitc-1.json` in the installed
+`espressif32` platform declares `upload.flash_size = "8MB"` and
+`upload.partitions = "default_8MB.csv"` — generic devkit-board
+defaults, not a fact about this project's hardware. `platformio.ini`
+never overrode either, so the build silently inherited them. The real
+SuperMini unit has 4MB flash. Confirmed the connection precisely:
+`default_8MB.csv`'s `app0` partition is exactly `0x330000` =
+**3,342,336 bytes** — the identical "Flash total" figure every build
+this whole project has reported (e.g. "31.5% used, 3342336 bytes
+total"), meaning this mismatch has been latent since the very first
+scaffold and only surfaced now because this was the first time the
+binary actually ran on the real chip rather than just being sized and
+linked against it.
+
+Fixed in `platformio.ini`:
+```
+board_upload.flash_size = 4MB
+board_build.partitions = default.csv
+```
+`default.csv` (the framework's stock 4MB table — confirmed by reading
+it directly from the installed `framework-arduinoespressif32` package,
+not assumed) keeps OTA capability (`ota_0`/`ota_1` app slots, unlike
+`huge_app.csv`'s single-app layout, which `WifiSync`'s
+`httpUpdate.update()` needs) plus `spiffs`/`coredump`, all within a
+real 4MB budget: `nvs` 20K, `otadata` 8K, `app0`/`app1` 1.25MB each,
+`spiffs` 1.375MB, `coredump` 64K.
+
+**Real consequence, not just a build-flag fix: available flash margin
+dropped a lot.** Same 1,053,789-byte image, now measured against the
+real 1,310,720-byte (1.25MB) OTA app slot instead of the previous
+phantom 3.19MB one — usage went from a comfortable 31.5% to **80.4%**,
+leaving roughly 257KB of headroom. Worth watching on future additions;
+if the app ever needs to grow past what `default.csv`'s 1.25MB OTA
+slots allow, the tradeoff is a custom partition table (e.g. dropping
+`spiffs`, which nothing in this project currently uses, to grow the
+app slots) rather than reverting to the 8MB assumption, since the
+physical chip genuinely is 4MB.
+
+Rebuilt clean after the fix (RAM unchanged at 56,328 bytes/17.2%;
+Flash 1,053,789/1,310,720 bytes, 80.4%). Not yet re-verified against
+actual hardware as of this entry — next step is reflashing and
+confirming the boot-loop is actually gone, not just that the build
+numbers now make sense.
+
+**Same day, second hardware crash after the flash-size fix — a genuine
+TFT_eSPI/core version mismatch, not stale flash.** Reflashing after
+the flash-size fix got past the `spi_flash` assert and into `setup()`
+(NVS's expected first-boot "not found" log, then I2C init), but hit a
+new, different crash immediately after: `Guru Meditation Error: Core 1
+panic'ed (StoreProhibited)`, `EXCVADDR: 0x00000010`.
+
+**Diagnosed precisely, not from the backtrace alone** — symbolized the
+crash addresses against the actual built ELF
+(`xtensa-esp32s3-elf-addr2line`) and disassembled the faulting
+instruction (`xtensa-esp32s3-elf-objdump`), which is how this got
+pinned down exactly rather than guessed at:
+
+```
+TFT_eSPI::begin_tft_write() TFT_eSPI.cpp:81
+ (inlined by) TFT_eSPI::writecommand() TFT_eSPI.cpp:982
+ <- TFT_eSPI::init() TFT_eSPI.cpp:692
+ <- Screen::begin() src/display/screen.cpp:13
+ <- setup() src/main.cpp:329
+```
+
+The faulting instruction is the `SET_BUS_WRITE_MODE` macro expansion
+(`*_spi_user = SPI_USR_MOSI | SPI_CK_OUT_EDGE`,
+`Processors/TFT_eSPI_ESP32_S3.h`) — a direct hardware-register write
+TFT_eSPI does for speed, bypassing the normal `SPIClass` API. Traced
+the address itself through the macro chain (checked against the
+actually-installed headers, not assumed): `_spi_user` expands to
+`SPI_USER_REG(SPI_PORT)`, `SPI_USER_REG(i)` is `REG_SPI_BASE(i) +
+0x10` (`soc/spi_reg.h`), and `REG_SPI_BASE(i)` is
+`((i)>=2) ? (DR_REG_SPI2_BASE + (i-2)*0x1000) : (0)` (`soc/soc.h`) —
+i.e. it deliberately returns 0 for `i` below 2, since indices 0/1 are
+the chip's internal flash/PSRAM SPI buses, not general-purpose ones.
+`SPI_PORT` is `#define`d to the bare `FSPI` macro for
+`CONFIG_IDF_TARGET_ESP32S3` in TFT_eSPI's own
+`Processors/TFT_eSPI_ESP32_S3.h`, and the currently-installed
+Arduino-ESP32 core defines `FSPI = 0` for S3-family chips
+(`esp32-hal-spi.h`) — a "logical SPI slot" numbering, not the raw
+peripheral index TFT_eSPI's macro assumed. So
+`SPI_USER_REG(0) = REG_SPI_BASE(0) + 0x10 = 0 + 0x10 = 0x10` — the
+exact crash address, confirmed by literally reading it back out of
+the disassembly (`movi.n a2, 16` computed as a compile-time constant,
+not a runtime value).
+
+This is a known TFT_eSPI/core version-numbering mismatch for
+ESP32-S3, and the library ships its own escape hatch for it:
+`USE_FSPI_PORT`, which forces `SPI_PORT` to the literal correct value
+(`2`) instead of deriving it from the ambiguous `FSPI` macro. Added
+`-D USE_FSPI_PORT=1` to `platformio.ini`'s `build_flags`. Checked the
+side effect before accepting it: with this flag, TFT_eSPI's
+`Processors/TFT_eSPI_ESP32_S3.c` also switches its internal `spi`
+handle from `SPIClass& spi = SPI;` (aliasing the same global object
+`main.cpp` calls `SPI.begin()` on) to its own separate
+`SPIClass spi = SPIClass(FSPI);` instance — still the same physical
+GPSPI2/FSPI peripheral (the global `SPI` object is itself constructed
+with `FSPI` by default on this core, confirmed in the installed
+`SPI.cpp`), just a second C++ handle onto it, with its own lock and
+attach state. `TFT_eSPI::init()`'s own `spi.begin(TFT_SCLK, TFT_MISO,
+TFT_MOSI, -1)` call already passes the project's real SCLK/MOSI pins
+explicitly (not relying on board-default pins), so this doesn't
+misroute anything. Not a live concurrency risk either: `pollTouch()`
+(the other SPI user on this bus, via `TouchXpt2046`, which still goes
+through the shared global `SPI` object) and all display rendering run
+serially within the same `displayTask`, never concurrently from
+another task — so the two SPIClass instances not sharing a lock
+doesn't matter in this codebase's actual usage pattern. Worth
+re-checking if SPI is ever touched from a second task in the future.
+
+Rebuilt clean (RAM 56,360/327,680 bytes — 17.2%, +32 bytes; Flash
+1,058,529/1,310,720 bytes — 80.8%, +4,740 bytes over the flash-size
+fix's build, consistent with TFT_eSPI now owning a second SPIClass
+instance). Not yet re-verified on hardware as of this entry — this is
+the second of what may be more first-bring-up issues; each one only
+becomes visible by actually running on the real chip; see readme.md
+§11 if this becomes a pattern worth its own checklist item.
