@@ -674,3 +674,132 @@ diagrams, the consolidated pin-map diagram, and the §8.3 table/note — GPIO15
 is now called out as free rather than assigned) and `pin-map.drawio` to
 match. Rebuilt clean after the `config.h`/`main.cpp`/`ui_screens.cpp`/
 `power_mgr.cpp` changes.
+
+**2026-09-13 — Touch calibration and nav bar, closing the gap the
+previous entry opened.**
+Implemented both pieces flagged as missing above: `TouchXpt2046`'s
+raw-ADC-to-panel calibration, and a `pollTouch()` that actually drives
+navigation with it.
+
+**Calibration — one-time, two-point, self-administered:**
+- `SettingsStore` gained `touchCalibrated()`/`touchCalibrationRaw()`/
+  `setTouchCalibration()`, persisted in NVS via the same `Preferences`
+  pattern as device name/Wi-Fi creds (new keys `tcalok`/`tcalx0`/`tcaly0`/
+  `tcalx1`/`tcaly1`). Only the two raw ADC readings are stored — the
+  screen-space points they correspond to are fixed by `config.h`'s new
+  `TOUCH_CAL_MARGIN` (20px inset from each edge), so there's nothing
+  per-unit to persist there.
+- `TouchXpt2046` gained `setCalibration()` (takes both calibration points'
+  raw+screen pairs) and `readCalibrated()` (applies the resulting linear
+  map, per axis, to a live reading). Two diagonal points is sufficient for
+  a resistive panel — it's linear, not the multi-point fit a capacitive
+  panel's distortion would need.
+- `main.cpp` gained `applyStoredOrNewCalibration()`, called once from
+  `setup()` after Touch initializes (only if it initialized OK — see
+  below), before any task is created: if `SettingsStore` already has a
+  calibration, apply it immediately; otherwise draw a crosshair at each of
+  the two calibration points in turn (`UiScreens::renderCalibrationPrompt()`,
+  a one-shot boot-time screen alongside the existing `renderBootError()`)
+  and block until each is touched, then persist and apply.
+- **Real failure mode considered, not just the happy path**: a touch panel
+  that's miswired, unpowered, or genuinely broken would make the "wait for
+  a touch" loop block forever, hanging boot completely — on a device with
+  no serial cable attached, that's indistinguishable from a bricked unit.
+  `waitForTouchOrSkip()` polls the physical button alongside the touch
+  panel and bails out (leaving calibration unset, tried again next boot)
+  if the button wins the race. `applyStoredOrNewCalibration()` is also
+  only called when `g_touch.begin()` itself succeeded — no point running a
+  calibration wait loop against a controller that already failed to
+  initialize.
+- **What's genuinely unresolved without real hardware**: whether the touch
+  overlay's raw X/Y axes are rotated relative to the display's drawn
+  coordinates is a physical-mounting fact, not something the calibration
+  math can determine — added `TOUCH_SWAP_XY` (`config.h`, default false)
+  as the escape hatch, documented as bring-up-time, not computed.
+
+**Navigation — bottom nav bar plus Detail-metric cycling:**
+- `config.h` gained `NAV_BAR_HEIGHT` (18px), reserved at the bottom of
+  every screen except the full-screen Alert.
+- `UiScreens::drawNavBar()` draws three equal-width zones (Home/Detail/Set)
+  with the active one highlighted, called from `renderHome()`,
+  `renderDetail()`, and `renderSettings()`. `navZoneAt()` is a `static`
+  method (no instance state needed) doing the matching hit-test, kept in
+  `ui_screens.cpp` specifically so the tap zones can never drift out of
+  sync with what `drawNavBar()` actually drew — main.cpp calls it rather
+  than recomputing zone boundaries itself.
+- `UiScreens::renderHome()`'s battery bar/text were nudged up (barY 130→118,
+  text y 146→132) — the old layout drew all the way to y≈154 on a 160px
+  panel, which would have collided with the new 18px nav bar. Detail and
+  Settings already left enough clearance and needed no layout change.
+- `main.cpp`'s new `pollTouch()` mirrors `pollButtons()`'s shape exactly
+  (edge-triggered on the rising press, calls `g_power.noteActivity()`,
+  polled once per 200ms display-task tick): a tap landing in the nav bar's
+  Y band jumps to `UiScreens::navZoneAt(x)`; a tap above it, while on
+  Detail, calls the previously-orphaned `nextDetailMetric()`. Naturally a
+  no-op before calibration exists, since `readCalibrated()` returns false
+  until `setCalibration()` has been called — no extra guard needed in
+  `displayTask()`.
+
+Updated `readme.md` §5 (button/touch division of labor) and §10's status
+line to match. Rebuilt clean after all of the above.
+
+**2026-09-13 — On-device Settings screen: brightness + sync-now, alert
+limits deliberately excluded.**
+Scoped down from "make Settings interactive" to exactly two controls,
+decided before writing any code (see the recommendation given in chat):
+brightness cycling and a "sync now" trigger, both using the same
+tap-zone mechanism `pollTouch()` already had for Detail-metric cycling.
+Alert limits stay phone-app-only — 5 numeric thresholds need real number
+entry to edit safely, which a tap-to-cycle UI on a 128x160 screen with no
+keyboard can't offer without real risk of a stray tap silently changing a
+safety threshold; the companion app already does this properly. The
+Settings screen now says so explicitly ("Alert limits: phone app only")
+rather than a `TODO` that looked like unfinished work.
+
+**Brightness needed real PWM first — it was never actually implemented.**
+`Screen::setBacklight()` was a `digitalWrite()` on/off placeholder (its own
+TODO comment said as much). Switched it to `ledc`: `ledcSetup()` +
+`ledcAttachPin()` + `ledcWrite()`, the channel-based API — checked
+`esp32-hal-ledc.h` in the actually-installed arduino-esp32 core (3.20017)
+directly rather than assuming, since the newer pin-based `ledcAttach(pin,
+freq, res)` signature exists in some core versions but not this one.
+`PowerMgr`'s existing `setBacklight(0)` sleep call needed no change — 0%
+duty is still fully off either way.
+
+Three discrete levels (`config.h`: `BRIGHTNESS_PERCENTS` = {30, 65, 100},
+`BRIGHTNESS_LABELS` = {"Low", "Med", "High"}) rather than a continuous
+slider — a tap only cycles forward, so a slider's precision would be
+wasted and slower to reach the far end. `SettingsStore` persists the
+*index*, not the raw percent, so the three levels can be retuned later
+without stale NVS data pointing at the wrong percent.
+
+**"Sync now" turned out to already be OTA, not a new concept** —
+`WifiSync::startOtaUpdate()`'s own doc comment already said "e.g. in
+response to the Settings screen's 'sync now' action," and readme.md #5
+has described Settings' sync action as "briefly turns on Wi-Fi" since the
+original scaffold. Rather than inventing a parallel request mechanism,
+made `BleGatt::requestOta()` public (was private, called only from the
+BLE settings-write handler) so the Settings-screen tap can set the exact
+same `_otaRequested` flag `otaTask` already polls via
+`consumeOtaRequest()`. Renamed its log line from `"[BLE] OTA update
+requested"` to `"[OTA] requested"` since it no longer only fires from BLE.
+
+**Wiring**, all in `main.cpp`:
+- `applyBrightnessLevel(level, persist)` is the one place that touches all
+  three: `Screen::setBacklight()` (actual PWM), `UiScreens::setBrightnessLevel()`
+  (what the Settings screen displays), and — only when `persist` is true —
+  `SettingsStore::setBrightnessLevel()` (NVS). `persist=false` is for
+  applying the already-stored level once at boot, where writing it
+  straight back to NVS would just be a pointless flash write for no
+  change.
+- `pollTouch()` now branches on `g_userScreen` when a tap lands above the
+  nav bar: Detail cycles the metric (as before), Settings looks up
+  `UiScreens::settingsZoneAt(y)` (a new static hit-test, same
+  never-drift-out-of-sync reasoning as `navZoneAt()`) and either cycles
+  brightness or calls `g_ble.requestOta()`.
+- `UiScreens::renderSettings()` draws real state instead of `TODO` text,
+  and gained a matching `settingsZoneAt()` — the row Y-bands
+  (`kSettingsBrightnessRowY`/`kSettingsSyncRowY`/`kSettingsAlertRowY`,
+  `ui_screens.cpp`) are defined once and read by both.
+
+Rebuilt clean after all of the above.

@@ -6,6 +6,15 @@
 
 namespace {
 constexpr int kScreenW = TFT_WIDTH;
+
+// Settings screen row layout — shared between renderSettings() (what's
+// drawn) and settingsZoneAt() (what a tap there means), same reasoning as
+// drawNavBar()/navZoneAt(): one definition each row can't drift out of
+// sync with the other.
+constexpr int kSettingsBrightnessRowY = 24;
+constexpr int kSettingsSyncRowY = 44;
+constexpr int kSettingsAlertRowY = 64;
+constexpr int kSettingsRowTapHeight = 18;
 }  // namespace
 
 void UiScreens::begin(Screen &screen) {
@@ -16,10 +25,6 @@ void UiScreens::show(UiScreen screen) {
     _current = screen;
 }
 
-// Currently unreachable from any input — the button that called this was
-// dropped (main.cpp's pollButtons(), readme.md #5); kept as the method
-// touch navigation is meant to call once it's built, rather than deleting
-// and re-writing it later. See DEVELOPMENT.md.
 void UiScreens::nextDetailMetric() {
     switch (_detailMetric) {
         case DetailMetric::HeartRate:
@@ -89,16 +94,19 @@ void UiScreens::renderHome(const SensorSnapshot &data) {
     tft.setCursor(4, 106);
     tft.printf("Steps: %lu", static_cast<unsigned long>(data.stepCount));
 
-    // Battery bar
-    const int barX = 4, barY = 130, barW = kScreenW - 8, barH = 12;
+    // Battery bar — kept clear of the nav bar reserved at the bottom
+    // (TFT_HEIGHT - NAV_BAR_HEIGHT), unlike before touch navigation existed.
+    const int barX = 4, barY = 118, barW = kScreenW - 8, barH = 10;
     tft.drawRect(barX, barY, barW, barH, TFT_WHITE);
     int fillW = static_cast<int>((barW - 2) * (data.batteryPercent / 100.0f));
     fillW = std::max(0, std::min(fillW, barW - 2));
     uint16_t fillColor = data.batteryLow ? TFT_RED : TFT_GREEN;
     tft.fillRect(barX + 1, barY + 1, fillW, barH - 2, fillColor);
 
-    tft.setCursor(4, 146);
+    tft.setCursor(4, 132);
     tft.printf("Batt: %.0f%%", data.batteryPercent);
+
+    drawNavBar();
 }
 
 float UiScreens::detailValue(const SensorSnapshot &data) const {
@@ -188,6 +196,8 @@ void UiScreens::renderDetail(const SensorSnapshot &data) {
 
     pushTrendSample(detailValue(data));
     drawTrend(4, 70, kScreenW - 8, 60);
+
+    drawNavBar();
 }
 
 void UiScreens::renderAlert(const SensorSnapshot &data) {
@@ -229,14 +239,78 @@ void UiScreens::renderSettings() {
 
     tft.setCursor(4, 4);
     tft.println("Settings");
-    tft.setCursor(4, 24);
-    tft.println("Brightness: TODO");
-    tft.setCursor(4, 40);
-    tft.println("Alert limits: TODO");
-    tft.setCursor(4, 56);
-    tft.println("Sync now: TODO");
-    // TODO: wire these to actual interactive controls (readme.md #4) —
-    // currently static text only.
+
+    tft.setCursor(4, kSettingsBrightnessRowY);
+    tft.printf("Brightness: %s (tap)", BRIGHTNESS_LABELS[_brightnessLevel]);
+
+    tft.setCursor(4, kSettingsSyncRowY);
+    tft.println("Sync now (tap)");
+
+    tft.setCursor(4, kSettingsAlertRowY);
+    tft.println("Alert limits: phone app only");
+
+    drawNavBar();
+}
+
+SettingsZone UiScreens::settingsZoneAt(int16_t y) {
+    if (y >= kSettingsBrightnessRowY && y < kSettingsBrightnessRowY + kSettingsRowTapHeight) {
+        return SettingsZone::Brightness;
+    }
+    if (y >= kSettingsSyncRowY && y < kSettingsSyncRowY + kSettingsRowTapHeight) {
+        return SettingsZone::SyncNow;
+    }
+    return SettingsZone::None;
+}
+
+void UiScreens::drawNavBar() {
+    TFT_eSPI &tft = _screen->raw();
+    const int barY = TFT_HEIGHT - NAV_BAR_HEIGHT;
+    tft.fillRect(0, barY, kScreenW, NAV_BAR_HEIGHT, TFT_NAVY);
+    tft.drawFastHLine(0, barY, kScreenW, TFT_WHITE);
+
+    // zoneW must match navZoneAt()'s below exactly, or taps land on a
+    // different screen than the label under the finger.
+    static const char *kLabels[3] = {"Home", "Detail", "Set"};
+    static const UiScreen kZoneScreens[3] = {UiScreen::Home, UiScreen::Detail, UiScreen::Settings};
+    const int zoneW = kScreenW / 3;
+
+    tft.setTextSize(1);
+    for (int i = 0; i < 3; i++) {
+        tft.setTextColor(kZoneScreens[i] == _current ? TFT_YELLOW : TFT_WHITE, TFT_NAVY);
+        tft.setCursor(i * zoneW + 6, barY + 5);
+        tft.print(kLabels[i]);
+    }
+}
+
+UiScreen UiScreens::navZoneAt(int16_t x) {
+    const int zoneW = kScreenW / 3;
+    if (x < zoneW) {
+        return UiScreen::Home;
+    }
+    if (x < zoneW * 2) {
+        return UiScreen::Detail;
+    }
+    return UiScreen::Settings;
+}
+
+void UiScreens::renderCalibrationPrompt(int pointNumber, int16_t x, int16_t y) {
+    if (_screen == nullptr) {
+        return;
+    }
+    TFT_eSPI &tft = _screen->raw();
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextSize(1);
+
+    tft.setCursor(4, 4);
+    tft.printf("Touch calibration %d/2", pointNumber);
+    tft.setCursor(4, 18);
+    tft.println("Tap the crosshair.");
+    tft.setCursor(4, 30);
+    tft.println("Press the button to skip.");
+
+    tft.drawFastHLine(x - 6, y, 13, TFT_YELLOW);
+    tft.drawFastVLine(x, y - 6, 13, TFT_YELLOW);
 }
 
 void UiScreens::renderBootError(const String &failedList) {

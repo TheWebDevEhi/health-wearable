@@ -78,15 +78,6 @@ void sensorTask(void *) {
 // Settings -> Home. Polled at the display task's 200 ms tick rather than
 // via interrupt, so a press shorter than that can be missed — fine for now,
 // see DEVELOPMENT.md if it feels laggy on real hardware.
-//
-// Down to one button (readme.md #5): there used to be a second button that
-// cycled the Detail screen's metric or jumped straight to Home from
-// anywhere. Neither is reachable right now — the touch panel is meant to
-// take over that role eventually, but touch isn't hooked into navigation
-// yet (g_touch is initialized in setup() but nothing calls pressed()/
-// readRaw() from a task loop, and raw-ADC-to-panel calibration is still a
-// TODO in touch_xpt2046.h). Until that's built, Detail always shows
-// whichever metric UiScreens defaults to. See DEVELOPMENT.md.
 void pollButtons() {
     static bool prevButton1 = HIGH;
 
@@ -113,9 +104,74 @@ void pollButtons() {
     }
 }
 
+// Applies a brightness level everywhere it needs to land: the actual PWM
+// (Screen), what the Settings screen displays (UiScreens), and — only when
+// persist is true — NVS (SettingsStore). persist=false is for applying the
+// already-persisted level once at boot, where writing it straight back to
+// NVS would just be a pointless flash write.
+void applyBrightnessLevel(uint8_t level, bool persist) {
+    g_screen.setBacklight(BRIGHTNESS_PERCENTS[level]);
+    g_ui.setBrightnessLevel(level);
+    if (persist) {
+        g_settings.setBrightnessLevel(level);
+    }
+}
+
+// Touch semantics (readme.md #5): tapping the bottom nav bar jumps
+// directly to that screen. Above the bar, what a tap does depends on the
+// screen: on Detail it cycles the shown metric (the same action the
+// now-removed Button 2 used to perform); on Settings, its row decides —
+// Brightness cycles through BRIGHTNESS_PERCENTS, Sync Now requests an OTA
+// check the same way a BLE kCmdStartOta write would (readme.md #7); the
+// alert-limits row is display-only (phone-app-only, by design). Home has
+// no content-area action. Edge-triggered on the rising press (like
+// pollButtons()) so holding a finger down doesn't repeat every 200 ms
+// tick. A no-op until g_touch has been calibrated (readCalibrated()
+// always returns false until then — see applyStoredOrNewCalibration()).
+void pollTouch() {
+    static bool prevTouched = false;
+
+    int16_t x, y;
+    bool touched = g_touch.readCalibrated(x, y);
+    bool justPressed = touched && !prevTouched;
+    prevTouched = touched;
+
+    if (!justPressed) {
+        return;
+    }
+    g_power.noteActivity();
+
+    const int navBarTop = TFT_HEIGHT - NAV_BAR_HEIGHT;
+    if (y >= navBarTop) {
+        g_userScreen = UiScreens::navZoneAt(x);
+        return;
+    }
+
+    if (g_userScreen == UiScreen::Detail) {
+        g_ui.nextDetailMetric();
+        return;
+    }
+
+    if (g_userScreen == UiScreen::Settings) {
+        switch (UiScreens::settingsZoneAt(y)) {
+            case SettingsZone::Brightness: {
+                uint8_t next = (g_settings.brightnessLevel() + 1) % BRIGHTNESS_LEVEL_COUNT;
+                applyBrightnessLevel(next, /*persist=*/true);
+                break;
+            }
+            case SettingsZone::SyncNow:
+                g_ble.requestOta();
+                break;
+            case SettingsZone::None:
+                break;
+        }
+    }
+}
+
 void displayTask(void *) {
     for (;;) {
         pollButtons();
+        pollTouch();
 
         SensorSnapshot snapshot = sensorDataGet();
         bool alert = sensorDataIsAlert(snapshot);
@@ -171,6 +227,67 @@ void otaTask(void *) {
     }
 }
 
+// Blocks until the touch panel is pressed, or the button is pressed as an
+// escape hatch — a broken or unwired touch panel must not be able to hang
+// boot forever waiting for a touch that will never come. Returns false if
+// the button won the race.
+bool waitForTouchOrSkip() {
+    for (;;) {
+        if (g_touch.pressed()) {
+            return true;
+        }
+        if (digitalRead(PIN_BUTTON_1) == LOW) {
+            return false;
+        }
+        delay(20);
+    }
+}
+
+// One-time, two-point touch calibration (readme.md #5, #11). Runs from
+// setup(), before any task exists, so blocking here is fine — it's the
+// same shape as the existing boot-error pause below. Only reached if Touch
+// itself initialized OK (see the touchOk check in setup()); if it's never
+// calibrated (skipped via the button, or Touch failed to init), g_touch's
+// readCalibrated() just keeps returning false forever and pollTouch()
+// stays a permanent no-op — full-screen navigation still works via the
+// physical button either way.
+void applyStoredOrNewCalibration() {
+    constexpr int16_t kScreenX0 = TOUCH_CAL_MARGIN;
+    constexpr int16_t kScreenY0 = TOUCH_CAL_MARGIN;
+    constexpr int16_t kScreenX1 = TFT_WIDTH - TOUCH_CAL_MARGIN;
+    constexpr int16_t kScreenY1 = TFT_HEIGHT - TOUCH_CAL_MARGIN;
+
+    if (g_settings.touchCalibrated()) {
+        uint16_t rawX0, rawY0, rawX1, rawY1;
+        g_settings.touchCalibrationRaw(rawX0, rawY0, rawX1, rawY1);
+        g_touch.setCalibration(rawX0, rawY0, kScreenX0, kScreenY0, rawX1, rawY1, kScreenX1, kScreenY1);
+        return;
+    }
+
+    g_ui.renderCalibrationPrompt(1, kScreenX0, kScreenY0);
+    if (!waitForTouchOrSkip()) {
+        return;
+    }
+    uint16_t rawX0, rawY0;
+    g_touch.readRaw(rawX0, rawY0);
+    while (g_touch.pressed()) {
+        delay(20);  // wait for release before showing the next target
+    }
+
+    g_ui.renderCalibrationPrompt(2, kScreenX1, kScreenY1);
+    if (!waitForTouchOrSkip()) {
+        return;
+    }
+    uint16_t rawX1, rawY1;
+    g_touch.readRaw(rawX1, rawY1);
+    while (g_touch.pressed()) {
+        delay(20);
+    }
+
+    g_settings.setTouchCalibration(rawX0, rawY0, rawX1, rawY1);
+    g_touch.setCalibration(rawX0, rawY0, kScreenX0, kScreenY0, rawX1, rawY1, kScreenX1, kScreenY1);
+}
+
 }  // namespace
 
 void setup() {
@@ -191,6 +308,10 @@ void setup() {
     g_screen.begin();
     g_ui.begin(g_screen);
     g_statusLed.begin();
+    // Apply whatever brightness level was persisted from a previous
+    // boot, overriding Screen::begin()'s fully-on default. Not persisting
+    // it right back — it's already what's in NVS.
+    applyBrightnessLevel(g_settings.brightnessLevel(), /*persist=*/false);
 
     String failedInit;
     auto checkInit = [&failedInit](const char *name, bool ok) {
@@ -209,7 +330,8 @@ void setup() {
     checkInit("Motion", g_motion.begin(Wire));
     g_motion.configureDoubleTapWake();
     checkInit("Fuel gauge", g_fuel.begin(Wire));
-    checkInit("Touch", g_touch.begin());
+    bool touchOk = g_touch.begin();
+    checkInit("Touch", touchOk);
 
     g_ble.attachSettingsStore(g_settings);
     checkInit("BLE", g_ble.begin());
@@ -221,6 +343,13 @@ void setup() {
     if (failedInit.length() > 0) {
         g_ui.renderBootError(failedInit);
         delay(3000);  // one-time pause so there's actually time to read it
+    }
+
+    // Only if Touch itself came up — calibration's wait loop needs a
+    // working touch panel to ever return, and the button-skip escape
+    // hatch only saves it from hanging, not from being pointless.
+    if (touchOk) {
+        applyStoredOrNewCalibration();
     }
 
     xTaskCreate(sensorTask, "sensor", TASK_STACK_SENSOR, nullptr, TASK_PRIORITY_SENSOR, nullptr);

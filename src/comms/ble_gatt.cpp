@@ -338,7 +338,8 @@ void BleGatt::requestOta() {
         _otaRequested = true;
         xSemaphoreGive(_mutex);
     }
-    Serial.println("[BLE] OTA update requested");
+    // No "[BLE]" prefix — this fires from the on-device Settings screen too.
+    Serial.println("[OTA] requested");
 }
 
 bool BleGatt::consumeOtaRequest() {

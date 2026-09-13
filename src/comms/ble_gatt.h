@@ -54,6 +54,13 @@ public:
     // NimBLE callback. See main.cpp's otaTask.
     bool consumeOtaRequest();
 
+    // Sets the same request consumeOtaRequest() polls for. Public so the
+    // on-device Settings screen's "Sync now" tap can trigger it directly
+    // (main.cpp) — not just the BLE settings-write path (kCmdStartOta,
+    // below). Same flag either way; consumeOtaRequest() doesn't know or
+    // care which surface asked.
+    void requestOta();
+
 private:
     // ~1 minute of history at the BLE task's 1 Hz notify tick. TODO: size
     // against real reconnect gaps once the companion PWA exists.
@@ -116,7 +123,6 @@ private:
     void sendHistoryBacklog();
     void applyDeviceName(const String &name);
     void applyWifiCredentials(const String &ssid, const String &password);
-    void requestOta();
 
     friend class ServerCallbacks;
     friend class SettingsCallbacks;

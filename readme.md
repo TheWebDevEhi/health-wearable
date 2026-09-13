@@ -33,8 +33,8 @@ ST7735** panel with **XPT2046** touch, and syncs to an Android/desktop
 - **Skin-surface temperature** — MLX90614 (non-contact infrared).
 - **Motion and activity** — LIS3DH (steps, activity state, double-tap wake, fall flag).
 - **Battery charge** — MAX17048 fuel gauge.
-- Live values on-screen, navigated with two side buttons (touch panel as a
-  secondary control).
+- Live values on-screen, navigated with one physical button (full-screen
+  cycling) plus a touch nav bar (direct jump + Detail-metric cycling).
 - Full-screen alert plus status LED when a reading crosses a set limit, mirrored
   to the phone as a notification.
 - A short rolling history held in memory, sent to the phone on connect.
@@ -137,16 +137,20 @@ Processing notes:
 - **Home screen** — heart rate and SpO₂ as large numbers, with temperature, step
   count, and a battery bar underneath.
 - **Detail screens** — one signal at a time with a short scrolling trend line,
-  reached with the buttons.
+  reached via the button or the touch nav bar.
 - **Alerts** — full-screen warning plus a blinking status LED, mirrored to the phone.
-- **Settings** — brightness, alert limits, and a "sync now" action that briefly
-  turns on Wi-Fi.
+- **Settings** — on-device: tap to cycle brightness (Low/Med/High), tap for a
+  "sync now" action that briefly turns on Wi-Fi to check for a firmware
+  update. Alert limits are phone-app-only by design (see DEVELOPMENT.md for
+  why) — this screen just states that rather than pretending to offer it.
 
-One side button is the primary control (cycles Home → Detail → Settings →
-Home); the XPT2046 touch layer is meant to eventually take over finer
-navigation (e.g. a bottom nav bar, cycling the Detail screen's metric), but
-that isn't built yet — see [DEVELOPMENT.md](DEVELOPMENT.md) for what's
-still missing before touch can actually drive the UI.
+The single side button cycles Home → Detail → Settings → Home. A bottom
+touch nav bar (Home/Detail/Set zones) jumps directly to any screen; tapping
+the content area above the bar does something screen-specific — cycles the
+shown metric on Detail, cycles brightness or triggers sync on Settings.
+Touch is calibrated once, automatically, on first boot — see
+[DEVELOPMENT.md](DEVELOPMENT.md) for how, and for the button-hold escape
+hatch if the panel doesn't respond.
 
 **Wake on double-tap.** The screen and main chip deep-sleep after a short idle
 period. The LIS3DH stays awake on its own hardware tap engine, watching for a
@@ -484,9 +488,10 @@ not stubs — for every subsystem in this brief:
 - **Sensors** — LIS3DH motion/double-tap, MLX90614 temperature (smoothed),
   MAX17048 battery, and MAX30102 HR/SpO2 (motion-gated, ratio-of-ratios
   algorithm) are all wired to their real driver libraries.
-- **Display** — ST7735 via TFT_eSPI, XPT2046 touch (read but not yet hooked
-  to UI actions), all four screens (Home/Detail/Alert/Settings) drawing real
-  content, and the WS2812 status LED.
+- **Display** — ST7735 via TFT_eSPI, XPT2046 touch (calibrated on first
+  boot, driving the nav bar and Detail-metric cycling), all four screens
+  (Home/Detail/Alert/Settings) drawing real content, and the WS2812 status
+  LED.
 - **Power** — idle-timeout deep sleep with double-tap/button EXT1 wake, and
   a separate, longer timeout while a BLE client is connected so the band
   doesn't drop an active connection out from under itself.
@@ -519,9 +524,10 @@ just compiling) found seven real runtime bugs; all seven are now fixed — see
 - The companion app's local history array was never cleared on reconnect and grew unboundedly
 
 What's still open: step-counting and fall-detection are placeholder
-heuristics, not tuned algorithms; the on-device Settings screen (drawn on
-the ST7735) still has no interaction wired, only the companion app's does;
-the BLE settings write has no authentication at the transport level (see
+heuristics, not tuned algorithms; the on-device Settings screen now has
+brightness cycling and a "sync now" trigger wired to touch, but alert
+limits are phone-app-only by design, not yet-to-be-built; the BLE settings
+write has no authentication at the transport level (see
 [DEVELOPMENT.md](DEVELOPMENT.md#settings-wire-protocol) — the companion
 app's admin password is a client-side deterrent only); and — most
 importantly — **none of this has run on physical hardware**. See

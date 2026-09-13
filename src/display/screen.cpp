@@ -4,16 +4,21 @@
 
 #include "../config.h"
 
+namespace {
+constexpr uint32_t kBacklightFreqHz = 5000;
+constexpr uint8_t kBacklightResolutionBits = 8;
+}  // namespace
+
 void Screen::begin() {
     _tft.init();
     _tft.setRotation(0);  // TODO confirm orientation at bring-up (readme.md #11.1)
 
-    pinMode(PIN_TFT_BL, OUTPUT);
+    ledcSetup(kBacklightChannel, kBacklightFreqHz, kBacklightResolutionBits);
+    ledcAttachPin(PIN_TFT_BL, kBacklightChannel);
     setBacklight(100);
 }
 
 void Screen::setBacklight(uint8_t dutyPercent) {
-    // TODO: switch to ledc PWM once the brightness curve is tuned; this
-    // placeholder only supports fully on/off (readme.md #4 Settings screen).
-    digitalWrite(PIN_TFT_BL, dutyPercent > 0 ? HIGH : LOW);
+    uint32_t duty = (static_cast<uint32_t>(dutyPercent) * ((1 << kBacklightResolutionBits) - 1)) / 100;
+    ledcWrite(kBacklightChannel, duty);
 }

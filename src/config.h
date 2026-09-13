@@ -76,6 +76,43 @@ constexpr float ALERT_TEMP_HIGH_C  = 38.5f;
 // TODO: calibrate against a known-good reference (readme.md #3).
 constexpr float TEMP_SKIN_TO_BODY_OFFSET_C = 2.0f;
 
+// ---------------------------------------------------------------------------
+// Touch navigation (readme.md #5) — see DEVELOPMENT.md for the design.
+// ---------------------------------------------------------------------------
+
+// Whether the touch panel's raw X/Y axes are swapped relative to the
+// display's drawn coordinate system. This is a physical-mounting question
+// (which way the touch overlay's film is oriented on the glass), not
+// something derivable from the calibration math — genuinely unknown
+// without a real unit. Flip and re-flash if the calibration crosshair
+// doesn't track finger position correctly at bring-up (readme.md #11).
+constexpr bool TOUCH_SWAP_XY = false;
+
+// Inset, in pixels, from each screen edge for the two calibration targets.
+// Keeps the crosshairs off the panel's least-linear extreme edges, where
+// resistive touch response tends to be less reliable.
+constexpr int16_t TOUCH_CAL_MARGIN = 20;
+
+// Height, in pixels, reserved at the bottom of the screen for the touch
+// nav bar. Every screen except the full-screen Alert draws around this.
+constexpr int NAV_BAR_HEIGHT = 18;
+
+// ---------------------------------------------------------------------------
+// On-device Settings screen (readme.md #5). Scoped deliberately to
+// brightness + sync-now — alert limits stay phone-app-only, since editing
+// 5 numeric thresholds via tap-to-cycle on a 128x160 screen with no
+// keyboard is disproportionate, and a stray tap silently changing a safety
+// threshold is a real risk the phone app's actual input fields don't have.
+// ---------------------------------------------------------------------------
+
+// Discrete brightness levels the Settings screen cycles through by tap.
+// SettingsStore persists the *index* into these arrays, not the raw
+// percent, so the levels themselves can be retuned later without
+// invalidating what's already stored in NVS on units in the field.
+constexpr uint8_t BRIGHTNESS_LEVEL_COUNT = 3;
+constexpr uint8_t BRIGHTNESS_PERCENTS[BRIGHTNESS_LEVEL_COUNT] = {30, 65, 100};
+constexpr const char *BRIGHTNESS_LABELS[BRIGHTNESS_LEVEL_COUNT] = {"Low", "Med", "High"};
+
 // Idle time before the screen and chip deep-sleep (readme.md #5). TODO:
 // tune once real usage patterns are known, and expose on the Settings
 // screen (readme.md #4).
