@@ -1,5 +1,6 @@
 #include "motion_lis3dh.h"
 
+#include <Arduino.h>  // millis() — don't rely on it arriving transitively via Wire.h/Adafruit_LIS3DH.h
 #include <cmath>
 
 #include "../config.h"
@@ -23,11 +24,36 @@ bool MotionLis3dh::configureDoubleTapWake() {
 
 void MotionLis3dh::update() {
     _lis.read();
+    uint32_t nowMs = millis();
 
-    // TODO: replace with a real step-counting algorithm (peak detection on
-    // acceleration magnitude) and a fall heuristic (readme.md #3). For now
-    // this only reports whether the arm is moving, which is what PPG
-    // motion-gating needs.
     float magnitude = std::sqrt(_lis.x_g * _lis.x_g + _lis.y_g * _lis.y_g + _lis.z_g * _lis.z_g);
     _isMoving = std::fabs(magnitude - 1.0f) > kMovementThresholdG;
+
+    // Step counting: count on each rising edge above kStepThresholdG,
+    // debounced by kStepDebounceMs so a single step's rise-then-fall in
+    // magnitude isn't counted twice.
+    bool aboveStepThreshold = magnitude > kStepThresholdG;
+    if (aboveStepThreshold && !_wasAboveStepThreshold && (nowMs - _lastStepMs) >= kStepDebounceMs) {
+        _stepCount++;
+        _lastStepMs = nowMs;
+    }
+    _wasAboveStepThreshold = aboveStepThreshold;
+
+    // Fall detection: arm a candidate on free-fall, confirm it on an
+    // impact spike within the window. Re-arming on every low reading
+    // (rather than only the first) anchors the window to "impact must
+    // follow the most recent free-fall sample soon," which tracks real
+    // fall physics better than anchoring to when free-fall first began.
+    if (magnitude < kFreeFallThresholdG) {
+        _freeFallStartMs = nowMs;
+    }
+    if (_freeFallStartMs != 0 && (nowMs - _freeFallStartMs) <= kFallWindowMs &&
+        magnitude > kImpactThresholdG) {
+        _fallDetected = true;
+        _fallDetectedAtMs = nowMs;
+        _freeFallStartMs = 0;  // consumed — don't let the same event re-trigger
+    }
+    if (_fallDetected && (nowMs - _fallDetectedAtMs) > kFallAlertDurationMs) {
+        _fallDetected = false;
+    }
 }

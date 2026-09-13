@@ -523,8 +523,10 @@ just compiling) found seven real runtime bugs; all seven are now fixed — see
 - OTA had no trigger anywhere in the firmware or the companion app — both sides now have one (settings command `0x04`, a dedicated `otaTask`, and a "Start update" button)
 - The companion app's local history array was never cleared on reconnect and grew unboundedly
 
-What's still open: step-counting and fall-detection are placeholder
-heuristics, not tuned algorithms; the on-device Settings screen now has
+What's still open: step-counting (rising-edge magnitude counter) and
+fall-detection (free-fall-then-impact) are real, simple heuristics now
+rather than unimplemented stubs, but their thresholds are guesses, not
+tuned against real data; the on-device Settings screen now has
 brightness cycling and a "sync now" trigger wired to touch, but alert
 limits are phone-app-only by design, not yet-to-be-built; the BLE settings
 write has no authentication at the transport level (see

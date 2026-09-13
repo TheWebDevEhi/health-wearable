@@ -803,3 +803,49 @@ requested"` to `"[OTA] requested"` since it no longer only fires from BLE.
   `ui_screens.cpp`) are defined once and read by both.
 
 Rebuilt clean after all of the above.
+
+**2026-09-13 — Real step-counting and fall-detection heuristics,
+replacing the unimplemented stubs.**
+`MotionLis3dh::update()` previously only computed `isMoving()` — `_stepCount`
+stayed 0 forever and `_fallDetected` stayed false forever, both declared
+but never written anywhere (not merely untuned, genuinely absent). Added
+two independent, simple, well-established heuristics — not gait analysis
+or ML, both explicitly documented as placeholder-tuned:
+
+- **Step counting**: rising-edge counter on acceleration magnitude —
+  count once when magnitude crosses above `kStepThresholdG` (1.2g) from
+  below, debounced by `kStepDebounceMs` (250ms, capping counting at 240
+  steps/min) so one physical step's single rise-then-fall isn't counted
+  twice.
+- **Fall detection**: the standard two-stage free-fall-then-impact
+  heuristic — arm a candidate when magnitude drops below
+  `kFreeFallThresholdG` (0.4g, near-weightless), confirm it if magnitude
+  spikes above `kImpactThresholdG` (2.5g) within `kFallWindowMs` (1000ms)
+  of the *most recent* low reading (re-armed on every qualifying sample,
+  not just the first, so the window tracks "impact soon after motion
+  stops indicating free-fall" rather than a stale first-touch timestamp).
+- **A real design gap, not an oversight, is now handled explicitly**:
+  once `_fallDetected` latches true, nothing else in the firmware ever
+  clears it — no button/touch "acknowledge" exists for this alert
+  specifically (unlike HR/SpO2/temp alerts, which clear naturally once
+  the reading is back in range). Without a fix, one fall event would
+  permanently occupy the Alert screen until reboot. Added
+  `kFallAlertDurationMs` (10s) — the flag auto-clears that long after being
+  set. Not a validated duration, just "long enough to notice, not
+  forever."
+
+All five constants are `private static constexpr` inside `MotionLis3dh`,
+matching where the pre-existing `kMovementThresholdG` already lived —
+kept consistent with that existing local pattern rather than moving
+tunables to `config.h`, since this file already established the
+per-sensor-class placement.
+
+Added an explicit `#include <Arduino.h>` to `motion_lis3dh.cpp` for
+`millis()` rather than relying on it arriving transitively via
+`Wire.h`/`Adafruit_LIS3DH.h` — same category of mistake as the
+already-fixed missing `<Arduino.h>` in `ble_gatt.cpp` earlier this
+project, worth avoiding proactively rather than waiting for the build to
+catch it again.
+
+Updated readme.md's status line (§10) to describe these as real
+heuristics needing tuning, not unimplemented stubs. Rebuilt clean.
