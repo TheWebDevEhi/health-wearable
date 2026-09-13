@@ -128,7 +128,18 @@ void applyBrightnessLevel(uint8_t level, bool persist) {
 // pollButtons()) so holding a finger down doesn't repeat every 200 ms
 // tick. A no-op until g_touch has been calibrated (readCalibrated()
 // always returns false until then — see applyStoredOrNewCalibration()).
-void pollTouch() {
+//
+// alertActive silences the nav-bar jump and Settings-zone dispatch (but
+// not activity-tracking — see below) while the Alert screen is showing.
+// renderAlert() draws no nav bar and no Settings rows, so without this a
+// tap landing where those rows/zones normally are would blindly cycle
+// brightness or fire an OTA request against a screen the wearer can't
+// see — a real gap found in an end-to-end review, not a hypothetical
+// (see DEVELOPMENT.md). Button navigation deliberately keeps working
+// during an alert (g_userScreen's own comment) since it only ever changes
+// *where the user will land once the alert clears*, not an immediate
+// side effect like touch's Settings zone can.
+void pollTouch(bool alertActive) {
     static bool prevTouched = false;
 
     int16_t x, y;
@@ -139,7 +150,13 @@ void pollTouch() {
     if (!justPressed) {
         return;
     }
+    // A tap is real user activity regardless of what it's allowed to do —
+    // counts toward the idle/sleep timer even when alertActive suppresses
+    // everything below.
     g_power.noteActivity();
+    if (alertActive) {
+        return;
+    }
 
     const int navBarTop = TFT_HEIGHT - NAV_BAR_HEIGHT;
     if (y >= navBarTop) {
@@ -170,11 +187,11 @@ void pollTouch() {
 
 void displayTask(void *) {
     for (;;) {
-        pollButtons();
-        pollTouch();
-
         SensorSnapshot snapshot = sensorDataGet();
         bool alert = sensorDataIsAlert(snapshot);
+
+        pollButtons();
+        pollTouch(alert);
 
         g_ui.show(alert ? UiScreen::Alert : g_userScreen);
         g_ui.render(snapshot);
@@ -193,6 +210,10 @@ void displayTask(void *) {
 void bleTask(void *) {
     for (;;) {
         g_ble.notify(sensorDataGet());
+        // Applies a queued device-rename's advertising restart here,
+        // deliberately not inside the GATT write callback that requested
+        // it — see BleGatt::applyDeviceName()'s comment.
+        g_ble.pollPendingNameChange();
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

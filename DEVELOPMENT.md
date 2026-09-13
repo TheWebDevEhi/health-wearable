@@ -867,3 +867,112 @@ Fixed by switching to `LIS3DH_RANGE_8_G`. Checked this doesn't cost
 LIS3DH's 12-bit high-res output still resolves well under 0.1g/step at
 ±8g, comfortably fine-grained relative to those two thresholds (0.15g and
 0.4g). Rebuilt clean.
+
+**2026-09-13 — Fixed the two remaining bring-up-checklist risks from the
+BLE mutex/history-race review, rather than leaving them as "verify on
+hardware."**
+
+**BLE advertising restart mid-connection.** `applyDeviceName()` used to
+call `advertising->stop()`/`start()` synchronously, inside the GATT write
+callback that requested the rename — the exact callback NimBLE's host
+stack sends its automatic ATT Write Response for the moment it returns,
+on that same connection. Restarting advertising there risked racing that
+in-flight response. There's no in-callback hook for "after the response
+is sent" — it's the stack's own bookkeeping, invisible to application
+code — so the fix defers the whole thing to a later task tick instead of
+trying to reorder anything inside the callback:
+
+- `applyDeviceName()` now only persists the name (`SettingsStore`) and
+  queues it (`_pendingDeviceName`/`_pendingNameChange`, guarded by the
+  existing mutex) — same shape as the pre-existing `_otaRequested`
+  pattern.
+- New `BleGatt::pollPendingNameChange()` does the actual
+  `NimBLEDevice::setDeviceName()` + advertising restart, test-and-clearing
+  the pending flag. Polled from `bleTask` (`main.cpp`) once per second,
+  right after `notify()` — a different FreeRTOS task than NimBLE's host
+  task, so by the time it runs, the write callback (and thus the
+  response) has necessarily already completed.
+
+**NimBLE host task stack headroom.** `sendHistoryBacklog()`'s 600-byte
+`HistoryEntry snapshot[kHistoryCapacity]` was a stack-local array on
+NimBLE's own host task — moved to a new class member, `_historySnapshot`
+(`ble_gatt.h`). Trades an unverified transient stack cost for a permanent
+600-byte RAM reservation (on top of the existing 600-byte `_history[]`
+buffer) — negligible on this target's headroom (17% RAM used so far), but
+worth being honest that it's a genuine tradeoff, not a free fix: a
+static/member buffer isn't inherently reentrant the way a stack-local one
+is. It's only safe here because `sendHistoryBacklog()` can never run twice
+concurrently (NimBLE's single host task processes GATT callbacks
+serially) — if a second call path to it is ever added, this buffer needs
+its own guard.
+
+**Honest about what this doesn't fix**: moving the one known 600-byte
+contributor off the stack removes the largest *identified* risk, not
+every possible one — NimBLE's own internal ATT/GATT processing and any
+`String`/`Serial.printf` stack usage elsewhere in the same call chain are
+still unmeasured. Real confirmation still needs `uxTaskGetStackHighWaterMark()`
+on real hardware after triggering a history request. Updated readme.md
+§11 items 6 and 7 to reflect "fixed"/"reduced" rather than "unverified."
+Rebuilt clean.
+
+**2026-09-13 — End-to-end verification pass (companion app driven live in
+a real browser; firmware re-traced logic-only, still no physical
+hardware). One real gap found and fixed.**
+
+The companion app was served locally and driven through an actual
+browser session rather than just read: connect flow (real
+`requestDevice()` chooser, confirmed it genuinely hits `NotFoundError`
+with no adapter present and recovers cleanly), theme toggle (confirmed
+an actual `getComputedStyle` repaint, not just a stored preference),
+the admin-password gate on Wi-Fi save/OTA-start (cancel, mismatch,
+first-set, session-persistence across both buttons, wrong-password and
+correct-password on a later session after a reload), and the
+disconnected-write error path. Also called the pure `decoders.js`/
+`settings-protocol.js` functions directly with synthetic byte buffers
+to confirm the wire format matches `ble_gatt.cpp` exactly, including
+the IEEE-11073 float and the settings-command length caps — all
+round-tripped correctly, no drift between the two sides.
+
+One environment artifact, not an app bug: `service-worker.js`
+registration fails in this sandboxed browser pane even for a
+trivial one-line control script with no app code in it, while a plain
+`fetch()` of the same file succeeds — confirmed environment-only by
+swapping in the minimal script and reproducing the identical failure.
+Not fixed (nothing to fix); re-verify PWA installability on a real
+device/Chrome before relying on it.
+
+**Real gap found and fixed: touch could blindly trigger Settings
+actions while the Alert screen was covering them.** `main.cpp`'s
+`pollTouch()` had no awareness of whether an alert was currently
+overriding the display. `renderAlert()` draws no nav bar and no
+Settings rows, but `pollTouch()` still ran its normal nav-bar/
+Settings-zone hit-test against whatever `g_userScreen` last was — so a
+tap landing where the Brightness or Sync-Now row would normally be
+could silently cycle backlight brightness or fire a real
+`g_ble.requestOta()` network request, with no visual feedback that
+anything happened, precisely while the wearer is looking at a
+full-screen fall/vitals alert they can't otherwise interact with.
+
+Checked first whether this removed any real capability: it doesn't.
+Alerts have never been manually dismissible — `sensorDataIsAlert()` is
+re-evaluated fresh every display-tick from live sensor state (HR/SpO2/
+temp/battery-low alerts clear themselves the instant the reading is
+back in range), and fall detection clears itself via
+`kFallAlertDurationMs` (`motion_lis3dh.cpp`) regardless of button or
+touch input. `pollButtons()`'s `case UiScreen::Alert:` has always been
+dead code — `g_userScreen` is never actually set to `Alert`, only
+`Home`/`Detail`/`Settings`.
+
+Fix: `pollTouch()` now takes an `alertActive` parameter (computed once
+in `displayTask()`, before `pollButtons()`/`pollTouch()` run, and
+passed to the latter) and returns immediately after
+`g_power.noteActivity()` — so a tap during an alert still counts as
+activity for the idle/sleep timer, but no longer reaches the nav-bar
+jump or the Settings-zone dispatch. Button navigation was deliberately
+left alone: cycling `g_userScreen` only changes *where the user lands
+once the alert clears*, not an immediate side effect the way touch's
+Settings zone can trigger one, and the existing `g_userScreen` design
+comment already documents that navigation state should keep working
+during an alert.
+
+Rebuilt clean after the change.

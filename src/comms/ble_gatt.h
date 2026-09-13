@@ -61,6 +61,13 @@ public:
     // care which surface asked.
     void requestOta();
 
+    // Applies a device-name change requested via a settings write, if one
+    // is pending. Must be polled from a task other than NimBLE's own host
+    // task — see main.cpp's bleTask, and applyDeviceName()'s comment for
+    // why the rename can't just happen synchronously in the GATT write
+    // callback that requests it.
+    void pollPendingNameChange();
+
 private:
     // ~1 minute of history at the BLE task's 1 Hz notify tick. TODO: size
     // against real reconnect gaps once the companion PWA exists.
@@ -116,6 +123,19 @@ private:
     int _historyCount = 0;
     int _connectedCount = 0;
     bool _otaRequested = false;
+    bool _pendingNameChange = false;
+    String _pendingDeviceName;
+
+    // sendHistoryBacklog()'s scratch copy — a class member instead of a
+    // stack-local array. This runs on NimBLE's own host task, whose stack
+    // size this project doesn't control; a 600-byte stack frame there was
+    // flagged as an unverified risk (DEVELOPMENT.md). Moving it here trades
+    // that for a permanent 600-byte reservation instead of a transient
+    // one — acceptable headroom-wise on this target, but only safe because
+    // sendHistoryBacklog() can't run twice concurrently (single NimBLE host
+    // task processes GATT callbacks serially) — if that ever stops being
+    // true, this buffer needs its own guard.
+    HistoryEntry _historySnapshot[kHistoryCapacity] = {};
 
     uint32_t _bootMs = 0;  // set once in begin(), read-only after — no lock needed
 

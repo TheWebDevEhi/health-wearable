@@ -286,14 +286,17 @@ void BleGatt::sendHistoryBacklog() {
     // Snapshot under the lock, then notify outside it — NimBLE's own
     // notify() calls can take a while (radio I/O), and holding our mutex
     // for that whole span would block pushHistory()/clientConnected() on
-    // other tasks for no reason.
-    HistoryEntry snapshot[kHistoryCapacity];
+    // other tasks for no reason. The snapshot itself is _historySnapshot
+    // (ble_gatt.h), a class member rather than a stack-local array — this
+    // runs on NimBLE's own host task, whose stack size this project
+    // doesn't control, so a 600-byte stack frame here was a real
+    // unverified risk (DEVELOPMENT.md).
     int count = 0;
     if (xSemaphoreTake(_mutex, portMAX_DELAY) == pdTRUE) {
         count = _historyCount;
         int oldest = (_historyHead - _historyCount + kHistoryCapacity) % kHistoryCapacity;
         for (int i = 0; i < count; i++) {
-            snapshot[i] = _history[(oldest + i) % kHistoryCapacity];
+            _historySnapshot[i] = _history[(oldest + i) % kHistoryCapacity];
         }
         xSemaphoreGive(_mutex);
     }
@@ -303,7 +306,7 @@ void BleGatt::sendHistoryBacklog() {
     // and add throttling/indications if notifications get dropped
     // (readme.md #6).
     for (int i = 0; i < count; i++) {
-        _historyChar->setValue(reinterpret_cast<uint8_t *>(&snapshot[i]), sizeof(HistoryEntry));
+        _historyChar->setValue(reinterpret_cast<uint8_t *>(&_historySnapshot[i]), sizeof(HistoryEntry));
         _historyChar->notify();
     }
 }
@@ -312,6 +315,40 @@ void BleGatt::applyDeviceName(const String &name) {
     if (_settings != nullptr) {
         _settings->setDeviceName(name);
     }
+    // The actual NimBLEDevice::setDeviceName()/advertising restart is
+    // deferred to pollPendingNameChange(), not done here. This runs
+    // synchronously inside the GATT write callback that requested the
+    // rename — the exact same call NimBLE's host stack is about to send
+    // its automatic ATT Write Response for, on this exact connection, the
+    // moment this callback returns. Restarting advertising here would
+    // race that in-flight response. Queuing it instead and applying it
+    // from bleTask (a different FreeRTOS task, guaranteed to run only
+    // after this callback has already returned) sidesteps that
+    // entirely — a real, previously-unverified risk, not a hypothetical
+    // (see DEVELOPMENT.md).
+    if (xSemaphoreTake(_mutex, portMAX_DELAY) == pdTRUE) {
+        _pendingDeviceName = name;
+        _pendingNameChange = true;
+        xSemaphoreGive(_mutex);
+    }
+    Serial.printf("[BLE] device name change to \"%s\" queued\n", name.c_str());
+}
+
+void BleGatt::pollPendingNameChange() {
+    bool hasPending = false;
+    String name;
+    if (xSemaphoreTake(_mutex, portMAX_DELAY) == pdTRUE) {
+        hasPending = _pendingNameChange;
+        if (hasPending) {
+            name = _pendingDeviceName;
+            _pendingNameChange = false;
+        }
+        xSemaphoreGive(_mutex);
+    }
+    if (!hasPending) {
+        return;
+    }
+
     NimBLEDevice::setDeviceName(name.c_str());
     NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
     advertising->setName(name.c_str());
