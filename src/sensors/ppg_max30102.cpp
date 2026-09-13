@@ -5,7 +5,17 @@
 #include "../config.h"
 
 bool PpgMax30102::begin(TwoWire &bus) {
-    if (!_sensor.begin(bus, I2C_SPEED_FAST)) {
+    // SparkFun's begin() calls bus.setClock(i2cSpeed) — this reconfigures
+    // the *shared* I2C bus for every sensor after this one, not just this
+    // driver's own transactions. I2C_SPEED_FAST (400kHz) was a real,
+    // confirmed bug on real hardware: the MLX90614 (temp_mlx90614.cpp)
+    // doesn't reliably tolerate above its 100kHz standard-mode spec, so it
+    // failed to initialize even though it was present and responding —
+    // verified by scanning the bus before this call (found it at the right
+    // address) vs. after (its own begin() failed the identical address
+    // probe). I2C_SPEED_STANDARD keeps every sensor on this shared bus
+    // within spec; nothing here needs 400kHz badly enough to risk it.
+    if (!_sensor.begin(bus, I2C_SPEED_STANDARD)) {
         return false;
     }
 

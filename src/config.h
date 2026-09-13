@@ -33,8 +33,12 @@ constexpr int PIN_TOUCH_IRQ = 2;
 constexpr int PIN_I2C_SDA = 8;
 constexpr int PIN_I2C_SCL = 9;
 
-// Motion wake — RTC-capable, required for deep-sleep wake (readme.md #5)
-constexpr int PIN_LIS3DH_INT1 = 1;
+// Motion wake — RTC-capable, required for deep-sleep wake (readme.md #5).
+// Registered as an EXT1 wake source (power/power_mgr.cpp) but currently
+// inert: double-tap detection isn't configured on the LIS3DSH yet
+// (deferred — see src/sensors/motion_lis3dsh.h), so this pin never
+// actually asserts. The button remains the only live wake source for now.
+constexpr int PIN_LIS3DSH_INT1 = 1;
 
 // Button (to GND, internal pull-up).
 // Down to one physical button — the second was dropped in favor of the
@@ -58,7 +62,12 @@ constexpr int PIN_MAX17048_ALRT = 38;
 // ---------------------------------------------------------------------------
 // I2C addresses — mirrors readme.md #8.4.
 // ---------------------------------------------------------------------------
-constexpr uint8_t I2C_ADDR_LIS3DH   = 0x18;  // or 0x19, depending on SDO strap
+// The board was originally speced around the LIS3DH (0x18/0x19 depending on
+// SDO strap); the physical unit is actually an LIS3DSH — a different chip,
+// not just a different address (see src/sensors/motion_lis3dsh.h). 0x1D is
+// hardware-confirmed via a boot-time I2C scan (readme.md #11), not assumed
+// from the datasheet's SA0 table.
+constexpr uint8_t I2C_ADDR_LIS3DSH  = 0x1D;
 constexpr uint8_t I2C_ADDR_MLX90614 = 0x5A;
 constexpr uint8_t I2C_ADDR_MAX17048 = 0x36;
 constexpr uint8_t I2C_ADDR_MAX30102 = 0x57;

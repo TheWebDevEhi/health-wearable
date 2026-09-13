@@ -1118,3 +1118,136 @@ instance). Not yet re-verified on hardware as of this entry — this is
 the second of what may be more first-bring-up issues; each one only
 becomes visible by actually running on the real chip; see readme.md
 §11 if this becomes a pattern worth its own checklist item.
+
+**Same day, third hardware issue: the shared I2C bus was silently
+running at 400kHz because of PPG's `begin()`, breaking MLX90614.**
+With the SPI crash fixed, `setup()` got through display/BLE init
+cleanly, but three of four I2C sensors reported `[INIT] X failed to
+initialize`. Rather than guess address-by-address, added a temporary
+boot-time I2C bus scan (`main.cpp`, right after `Wire.begin()`, marked
+for removal once bring-up is done) — `Wire.beginTransmission(addr)` /
+`endTransmission()==0` across `0x01`-`0x7E`, printing every address
+that ACKs.
+
+First real finding from the scan, not a guess: `0x5A` (MLX90614,
+config.h's `I2C_ADDR_MLX90614`) **was present and responding** — yet
+`TempMlx90614::begin()` still failed. Since the scan runs before any
+sensor's own `begin()`, and the underlying check both use is identical
+(`Adafruit_I2CDevice::detected()` does the exact same
+`beginTransmission`/`endTransmission` probe our scanner does —
+confirmed by reading BusIO's source, not assumed), something between
+the scan and `Temp::begin()` was changing the bus out from under it.
+Traced it to `PpgMax30102::begin()` (`ppg_max30102.cpp`), which runs
+immediately before Temp's `checkInit()` and calls
+`_sensor.begin(bus, I2C_SPEED_FAST)` — SparkFun's `MAX30105::begin()`
+calls `_i2cPort->setClock(i2cSpeed)` (confirmed in the installed
+library source), which reconfigures the *shared* `Wire` bus's clock
+for every sensor after it, not just PPG's own transactions, and
+nothing ever set it back. `I2C_SPEED_FAST` is 400kHz; the MLX90614 is
+well known for not reliably tolerating I2C speeds above its 100kHz
+standard-mode spec. That's the whole bug: the scan (100kHz, before PPG
+ran) found the MLX90614 fine; Temp's own `begin()` (400kHz, after PPG
+ran) failed the identical check against the identical, still-present
+device.
+
+Fixed by changing `ppg_max30102.cpp` to `I2C_SPEED_STANDARD` (100kHz)
+— also the SparkFun library's own default, so this wasn't a
+deliberate-but-risky choice being reversed, just an unnecessary
+opt-into-Fast-Mode nobody had a reason for. Multiple unrelated sensors
+sharing one bus means the slowest one's spec governs for all of them;
+nothing on this project's sensor list needs 400kHz badly enough to
+justify the risk. Rebuilt clean (RAM/Flash unchanged from the prior
+entry's numbers, as expected for a one-constant change).
+
+The scan's second finding is still open: it found `0x1D` where Motion
+(LIS3DH, expected `0x18` or `0x19` depending on the `SA0` strap) should
+be — `0x1D` isn't a value the LIS3DH's `SA0` pin can ever produce, so
+this isn't just a strapping surprise, it points at a possibly
+different physical part than expected (ADXL345/ADXL343 and MMA8452Q
+both commonly use `0x1D`). Not fixed yet — confirming the actual
+breakout/module in use before touching `config.h`'s address, since the
+`Adafruit_LIS3DH` driver also checks a chip-ID register on begin() and
+a different chip's register map wouldn't work even at the right
+address. Fuel gauge (`0x36`) not found in the scan is expected —
+confirmed not physically connected yet, not a bug.
+
+**Same day, fourth hardware issue: the Motion sensor is a genuinely
+different chip, the LIS3DSH, not the LIS3DH this board was speced
+around.** The user confirmed the physical module by its silkscreen —
+not a strapping quirk. Verified this isn't just an address difference
+before touching any code: LIS3DSH and LIS3DH are different ST parts
+with different register maps and different `WHO_AM_I` values (LIS3DSH
+= `0x3F`, confirmed against ST's own `stm32-lis3dsh` reference driver
+source on GitHub, not the datasheet's prose alone; LIS3DH = `0x33`) —
+so `Adafruit_LIS3DH::begin()` would keep failing even pointed at
+`0x1D`, since its own `WHO_AM_I` check would mismatch regardless of
+address.
+
+Checked what a fix actually required before writing anything: the one
+community Arduino library for this chip (`yazug/LIS3DSH`, 5 commits)
+looked thin and exposed no click/tap-detection API from its header, so
+it would silently drop the double-tap deep-sleep wake feature the
+project already has for LIS3DH. Given the size of the decision (new
+driver, re-verified units, a real feature gap either way), asked the
+user rather than picking silently — chose to build accel/steps/fall
+now and explicitly defer double-tap wake, either path.
+
+**Built a direct-register I2C driver instead of adopting the thin
+library**, matching this project's established practice of reading
+authoritative sources rather than trusting a lightly-maintained
+third-party one. Register addresses, bit layouts, and the mg/digit
+sensitivity table were all taken from STMicroelectronics' own
+`stm32-lis3dsh` reference driver (`lis3dsh.h`/`lis3dsh.c`), fetched
+directly rather than assumed:
+
+- `WHO_AM_I` (`0x0F`, expect `0x3F`), `CTRL_REG4` (`0x20`: ODR[7:4] |
+  BDU[3] | ZEN[2] | YEN[1] | XEN[0]), `CTRL_REG5` (`0x24`:
+  FSCALE[5:3]), and `OUT_X_L` through `OUT_Z_H` (`0x28`-`0x2D`, six
+  consecutive bytes, little-endian per axis) — confirmed byte-for-byte
+  against the fetched header, not paraphrased from memory.
+- Configured for 100 Hz, block-data-update, XYZ enabled, ±8g full
+  scale — the same headroom reasoning as the original LIS3DH tuning
+  (`kImpactThresholdG` is 2.5g; the range ceiling needs room above it).
+  Sensitivity at ±8g is `0.24 mg/digit` per ST's own table, applied
+  after a `>>4` (the 16-bit output register holds a 12-bit reading,
+  left-justified — ST's own driver does the same shift before scaling).
+- Renamed the file/class throughout (`motion_lis3dh.*` →
+  `motion_lis3dsh.*`, `MotionLis3dh` → `MotionLis3dsh`,
+  `I2C_ADDR_LIS3DH`/`PIN_LIS3DH_INT1` → the `LIS3DSH` equivalents) —
+  the old names were now actively misleading about what chip this
+  actually is, not just stale. Updated every call site: `main.cpp`
+  (include, instance, the `configureDoubleTapWake()` call site removed
+  with a comment explaining the deferral rather than left calling a
+  method that no longer exists), `power_mgr.cpp` (pin rename, and its
+  wake-source comment now says plainly that the LIS3DSH side of the
+  EXT1 wake mask is registered but inert until double-tap detection
+  is implemented — a harmless no-op, not a silent gap). Removed
+  `adafruit/Adafruit LIS3DH` and `adafruit/Adafruit Unified Sensor`
+  from `platformio.ini`'s `lib_deps` — confirmed neither
+  `Adafruit MLX90614 Library` nor `Adafruit MAX1704X` depend on
+  Unified Sensor (both only declare `Adafruit BusIO`), and nothing in
+  `src/` includes `Adafruit_Sensor.h` directly, so it was purely an
+  LIS3DH transitive dependency with nothing left pulling it in.
+- All of `MotionLis3dsh`'s step-counting and fall-detection logic is
+  copied verbatim from the old `MotionLis3dh` — those thresholds are
+  "g" units, not chip-specific, and the underlying algorithm doesn't
+  care which sensor produced the magnitude reading.
+
+**Double-tap wake is explicitly not implemented** — `MotionLis3dsh`
+has no `configureDoubleTapWake()` method at all (not a stub that
+silently does nothing). The LIS3DSH does support click/double-click
+detection in silicon (`CLICK_CFG` register, confirmed via the same ST
+source), so this is a real, addressable gap when it's worth doing, not
+a hardware limitation — see readme.md #11 item 5 for the tracked
+status.
+
+Updated `readme.md` throughout (§1, §4's sensor table, §5's wake
+section and state diagram, §6, §8's two wiring diagrams and the pin
+map/I2C tables, §9's dependency list, §10's status line, and §11 with
+two new checklist items covering the TFT_eSPI `SPI_PORT` fix from
+earlier today and this I2C/chip-identification fix) rather than
+leaving it describing a library and a chip this firmware no longer
+uses. Rebuilt clean; not yet reflashed/re-verified on hardware as of
+this entry — that's the next step, along with confirming the I2C
+speed fix (`ppg_max30102.cpp`, same day, above) actually gets Temp
+initializing now too.

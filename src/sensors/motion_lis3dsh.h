@@ -1,19 +1,29 @@
 #pragma once
 
-#include <Adafruit_LIS3DH.h>
 #include <Wire.h>
 
-// LIS3DH: steps, activity state, double-tap wake, fall flag (readme.md #3,
-// #5). Also the sensor the firmware leans on to reject motion-corrupted PPG
-// windows.
-class MotionLis3dh {
+// LIS3DSH: steps, activity state, fall flag (readme.md #3, #5). Also the
+// sensor the firmware leans on to reject motion-corrupted PPG windows.
+//
+// This talks to the chip directly over I2C rather than through a library.
+// The board was originally speced around the LIS3DH (Adafruit_LIS3DH), but
+// the physical unit on real hardware is a different chip, the LIS3DSH —
+// confirmed by a boot-time I2C scan (readme.md #11) that found it
+// responding at 0x1D, and by its WHO_AM_I register reading 0x3F, not the
+// LIS3DH's 0x33. Different chip, different register map — a driver written
+// for LIS3DH cannot talk to this part regardless of address. The register
+// addresses and mg/digit sensitivity values here are taken from
+// STMicroelectronics' own stm32-lis3dsh reference driver source
+// (lis3dsh.h/.c), not the datasheet's prose alone or guessed.
+//
+// Double-tap wake is NOT implemented here — deliberately deferred (the
+// LIS3DSH does support click/double-click detection in silicon via
+// CLICK_CFG, just not wired up yet). See power/power_mgr.cpp's wake-source
+// comment for the current consequence: the EXT1 wake source tied to this
+// chip's interrupt pin is registered but inert until that lands.
+class MotionLis3dsh {
 public:
     bool begin(TwoWire &bus);
-
-    // Configures the hardware double-tap engine so the sensor can wake the
-    // chip on GPIO1 while the MCU is in deep sleep.
-    bool configureDoubleTapWake();
-
     void update();
 
     uint32_t stepCount() const { return _stepCount; }
@@ -21,10 +31,11 @@ public:
     bool fallDetected() const { return _fallDetected; }
 
 private:
-    // Adafruit_LIS3DH binds its I2C bus at construction, not at begin(), so
-    // this only supports the global Wire instance — the only bus this
-    // hardware has (readme.md #8).
-    Adafruit_LIS3DH _lis{&Wire};
+    TwoWire *_bus = nullptr;
+
+    bool writeReg(uint8_t reg, uint8_t value);
+    bool readReg(uint8_t reg, uint8_t &value);
+    bool readAxes(int16_t &x, int16_t &y, int16_t &z);
 
     uint32_t _stepCount = 0;
     bool _isMoving = false;
@@ -32,7 +43,8 @@ private:
 
     // Movement threshold on |acceleration - 1g|, feeding isMoving() (used
     // for PPG motion-gating) — separate from the step/fall heuristics
-    // below, which have their own thresholds.
+    // below, which have their own thresholds. Unchanged from the original
+    // LIS3DH-based tuning — these are "g" thresholds, not chip-specific.
     static constexpr float kMovementThresholdG = 0.15f;
 
     // Step counting: a simple rising-edge counter on acceleration

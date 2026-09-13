@@ -31,7 +31,7 @@ ST7735** panel with **XPT2046** touch, and syncs to an Android/desktop
 
 - **Heart rate and SpO₂** — MAX30102 (PPG).
 - **Skin-surface temperature** — MLX90614 (non-contact infrared).
-- **Motion and activity** — LIS3DH (steps, activity state, double-tap wake, fall flag).
+- **Motion and activity** — LIS3DSH (steps, activity state, double-tap wake, fall flag).
 - **Battery charge** — MAX17048 fuel gauge.
 - Live values on-screen, navigated with one physical button (full-screen
   cycling) plus a touch nav bar (direct jump + Detail-metric cycling).
@@ -52,7 +52,7 @@ flowchart TB
     subgraph BODY["On-body sensing"]
         PPG["MAX30102<br/>PPG: HR + SpO2"]
         TEMP["MLX90614<br/>IR temperature"]
-        ACCEL["LIS3DH<br/>3-axis accel"]
+        ACCEL["LIS3DSH<br/>3-axis accel"]
         FUEL["MAX17048<br/>battery gauge"]
     end
 
@@ -116,7 +116,7 @@ flowchart LR
 | -------- | ------------------------------ | ------------------------------ | ----------------------------------------------------------- |
 | MAX30102 | Red + IR PPG                   | ~100 Hz in short bursts        | Heart rate (bpm), SpO₂ (%)                                  |
 | MLX90614 | Object + ambient IR temp       | 0.5–1 Hz                       | Skin-surface temp (°C), with an offset for a body estimate  |
-| LIS3DH   | X/Y/Z acceleration             | 25–100 Hz                      | Step count, activity state, tap, fall flag                  |
+| LIS3DSH  | X/Y/Z acceleration             | 25–100 Hz                      | Step count, activity state, tap, fall flag                  |
 | MAX17048 | Cell voltage & state of charge | on demand / every few minutes  | Battery %, low-battery flag                                 |
 
 Processing notes:
@@ -127,7 +127,7 @@ Processing notes:
   number.
 - **Temperature** — apply a fixed offset to the MLX90614 reading and smooth
   across a few samples; treat it as a trend, not a clinical reading.
-- **Activity** — use the LIS3DH FIFO and interrupt lines so the main chip stays
+- **Activity** — use the LIS3DSH FIFO and interrupt lines so the main chip stays
   asleep and wakes only on real movement or a double-tap.
 
 ---
@@ -153,17 +153,19 @@ Touch is calibrated once, automatically, on first boot — see
 hatch if the panel doesn't respond.
 
 **Wake on double-tap.** The screen and main chip deep-sleep after a short idle
-period. The LIS3DH stays awake on its own hardware tap engine, watching for a
+period. The LIS3DSH stays awake on its own hardware tap engine, watching for a
 double-tap, and raises an interrupt on **GPIO1** to wake the chip and light the
-screen. A button press wakes it too. In firmware, the Adafruit LIS3DH library
-exposes this through `setClick(2, threshold)`; tune the threshold and tap timing
-so a deliberate double-tap fires but ordinary arm movement does not.
+screen. A button press wakes it too. **Not yet implemented in firmware** — the
+sensor is driven by a direct-register I2C driver rather than a library (see
+DEVELOPMENT.md), and double-tap detection via the chip's `CLICK_CFG` register
+is deliberately deferred; see readme.md #11 for status. The wake source below
+is registered but currently inert until that lands.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Awake
     Awake --> DeepSleep: idle timeout
-    DeepSleep --> Awake: LIS3DH double-tap (GPIO1 IRQ)
+    DeepSleep --> Awake: LIS3DSH double-tap (GPIO1 IRQ)
     DeepSleep --> Awake: button press
     Awake --> Awake: real movement (activity update only)
 ```
@@ -181,7 +183,7 @@ stateDiagram-v2
   output and the 3V3 pin (or unplug the battery rail while programming over USB),
   so the two sources don't fight on the 3V3 net.
 - **Fuel gauge** — the MAX17048 reads the cell straight off VBAT.
-- **Sleep** — deep sleep between sample bursts; the LIS3DH wakes the chip on a
+- **Sleep** — deep sleep between sample bursts; the LIS3DSH wakes the chip on a
   double-tap or real movement, with a button as a fall-back. Wi-Fi stays off
   unless a sync or update is requested.
 
@@ -254,7 +256,7 @@ flowchart TB
     MCU(("ESP32-S3<br/>SuperMini"))
     MCU -->|GPIO8 SDA| I2C{{I2C bus}}
     MCU -->|GPIO9 SCL| I2C
-    I2C --- LIS["LIS3DH<br/>0x18 / 0x19"]
+    I2C --- LIS["LIS3DSH<br/>0x1D"]
     I2C --- MLX["MLX90614<br/>0x5A"]
     I2C --- MAX17["MAX17048<br/>0x36"]
     I2C --- MAX30["MAX30102<br/>0x57"]
@@ -295,7 +297,7 @@ flowchart TB
 
     MCU -->|GPIO8 SDA| I2C{{I2C bus}}
     MCU -->|GPIO9 SCL| I2C
-    I2C --- LIS["LIS3DH<br/>0x18 / 0x19"]
+    I2C --- LIS["LIS3DSH<br/>0x1D"]
     I2C --- MLX["MLX90614<br/>0x5A"]
     I2C --- MAX17["MAX17048<br/>0x36"]
     I2C --- MAX30["MAX30102<br/>0x57"]
@@ -369,7 +371,7 @@ A schematic-style version of the same connections, editable in
 | Display backlight             | LED                     | 6    | PWM                                            |
 | Touch chip select             | T_CS                    | 7    |                                                |
 | Touch interrupt               | T_IRQ                   | 2    | Input                                          |
-| LIS3DH INT1 (double-tap wake) | —                        | 1    | RTC-capable pin, required for deep-sleep wake |
+| LIS3DSH INT1 (double-tap wake) | —                       | 1    | RTC-capable pin, required for deep-sleep wake; currently inert — see #10/#11 |
 | I2C data                      | sensor SDA              | 8    | Shared by all four sensors                    |
 | I2C clock                     | sensor SCL              | 9    | Shared by all four sensors                    |
 | Button                         | —                        | 3    | To GND, internal pull-up; also a wake source; JTAG-select strap — don't hold at power-on/reset |
@@ -400,7 +402,7 @@ but is deliberately used above for Button 1 — see the note in the table.
 
 | Device   | Address            |
 | -------- | ------------------- |
-| LIS3DH   | `0x18` (or `0x19`) |
+| LIS3DSH  | `0x1D` (hardware-confirmed — see DEVELOPMENT.md, not the LIS3DH originally speced here) |
 | MLX90614 | `0x5A`             |
 | MAX17048 | `0x36`             |
 | MAX30102 | `0x57`             |
@@ -451,7 +453,11 @@ Firmware/
 - **Touch:** an `XPT2046` library, sharing the SPI bus with its own chip-select and calibration.
 - **PPG:** the SparkFun MAX3010x library, or the MAXREFDES117 HR/SpO₂ routine.
 - **Temperature:** an Adafruit or SparkFun MLX90614 library.
-- **Motion:** an Adafruit or STMicro LIS3DH library, with FIFO, interrupts, and `setClick` enabled.
+- **Motion:** the physical sensor turned out to be an LIS3DSH, not the LIS3DH
+  originally speced here — no maintained Arduino library exists for it worth
+  depending on, so it's driven directly over I2C (`src/sensors/motion_lis3dsh.cpp`);
+  see DEVELOPMENT.md. Click/double-click detection (`CLICK_CFG` register) is
+  deferred, not yet wired up.
 - **Battery:** a MAX17048 library.
 - **Bluetooth:** `NimBLE-Arduino`.
 - **Companion app:** plain `navigator.bluetooth` (Web Bluetooth) plus a light charting library.
@@ -485,9 +491,12 @@ The `platformio.ini` and `src/` tree in [§9](#9-firmware-layout) build clean
 against the real ESP32-S3 toolchain (PlatformIO), with real driver logic —
 not stubs — for every subsystem in this brief:
 
-- **Sensors** — LIS3DH motion/double-tap, MLX90614 temperature (smoothed),
-  MAX17048 battery, and MAX30102 HR/SpO2 (motion-gated, ratio-of-ratios
-  algorithm) are all wired to their real driver libraries.
+- **Sensors** — LIS3DSH motion (steps, activity, fall flag — double-tap wake
+  deferred, see #5/#11), MLX90614 temperature (smoothed), MAX17048 battery,
+  and MAX30102 HR/SpO2 (motion-gated, ratio-of-ratios algorithm) are all
+  wired to real driver logic. PPG, Temp, and Fuel gauge confirmed
+  initializing on real hardware; Motion's new direct-register driver not
+  yet reflashed/re-verified as of this line — see #11 item 10.
 - **Display** — ST7735 via TFT_eSPI, XPT2046 touch (calibrated on first
   boot, driving the nav bar and Detail-metric cycling), all four screens
   (Home/Detail/Alert/Settings) drawing real content, and the WS2812 status
@@ -545,7 +554,9 @@ what's next once real hardware is in hand.
 2. **Display VCC** — confirm 3.3 V lights the backlight fully.
 3. **Fuel-gauge I2C level** — check whether the MAX17048 module's I2C pull-ups reference VBAT or a regulated 3.3 V, and add a level shifter if needed before joining the shared bus.
 4. **PSRAM** — print `ESP.getPsramSize()` to confirm what's fitted.
-5. **Double-tap tuning** — set the LIS3DH tap threshold and timing so a deliberate double-tap wakes the screen but ordinary arm movement does not, and confirm the GPIO1 interrupt brings the chip out of deep sleep.
+5. **Double-tap wake — not yet implemented, not just untuned.** The physical Motion sensor turned out to be an LIS3DSH, not the LIS3DH originally speced (see item 10 below); its click/double-click detection lives in the `CLICK_CFG`/`CLICK_SRC`/`CLICK_THS` registers, which the current direct-register driver (`src/sensors/motion_lis3dsh.cpp`) doesn't touch yet. `PIN_LIS3DSH_INT1`'s EXT1 wake registration is in place and harmless, but inert until this lands. Deferred deliberately (see DEVELOPMENT.md), not forgotten.
 6. **BLE advertising restart mid-connection** — fixed: `BleGatt::applyDeviceName()` no longer restarts advertising synchronously inside the GATT write callback that requests a rename (that would race NimBLE's automatic ATT Write Response on the same connection). It's queued and applied from `bleTask` instead, a separate FreeRTOS task guaranteed to run only after the callback has returned. Still worth confirming on real hardware that the rename is actually visible to a scanning phone within a tick or two.
 7. **NimBLE host task stack headroom** — reduced, not eliminated: `sendHistoryBacklog()`'s 600-byte snapshot moved from a stack-local array to a class member, removing the single largest known contributor to that call's stack usage on NimBLE's own host task. This doesn't prove the rest of that call chain (NimBLE's own internal processing, `String`/`Serial.printf` usage elsewhere in the same path) fits comfortably — still worth checking `uxTaskGetStackHighWaterMark()` for that task after triggering a history request on real hardware.
 8. **Flash size — fixed, confirmed on first real flash.** The `esp32-s3-devkitc-1` board definition's 8MB-flash default (`upload.flash_size`/`default_8MB.csv`) doesn't match this project's actual 4MB SuperMini units — left unoverridden, the built binary's embedded flash-size header disagreed with the real chip at boot, which is fatal (`spi_flash: Detected size(4096k) smaller than the size in the binary image header(8192k). Probe failed.` / `assert failed: do_core_init`), not a soft warning. `platformio.ini` now pins `board_upload.flash_size = 4MB` and `board_build.partitions = default.csv` (see DEVELOPMENT.md's dated entry). Flash headroom is now genuinely tighter than earlier builds reported — 80.4% used (1,053,789 / 1,310,720 bytes) against the real 1.25MB OTA app slot, not the phantom 3.19MB one every prior build number in this doc was silently measured against.
+9. **TFT_eSPI/ESP32-S3 SPI register crash — fixed, confirmed on first real flash.** `TFT_eSPI::init()` writes directly to an SPI peripheral register computed from a macro (`SPI_PORT`) that TFT_eSPI sets from the Arduino core's own `FSPI` constant — which is `0` on this installed core for S3-family chips, not the raw peripheral index (`2`) the register math actually needs. That mismatch faulted the very first display write (`StoreProhibited` at address `0x10`, traced to the exact instruction via `addr2line`/`objdump` against the built ELF, not guessed). Fixed with `-D USE_FSPI_PORT=1` in `platformio.ini`, TFT_eSPI's own documented escape hatch for this. See DEVELOPMENT.md's dated entry for the full register-address trace.
+10. **I2C bus — one real bug and one chip misidentification, both diagnosed via a real hardware scan; fixes not yet reflashed.** `PpgMax30102::begin()` was silently reconfiguring the *shared* I2C bus to 400kHz (`I2C_SPEED_FAST`) for every sensor after it — the MLX90614 doesn't reliably tolerate above its 100kHz spec, so it failed to initialize even though present and responding (confirmed via a boot-time bus scan: found at the right address before PPG ran, failed the identical check after). Fixed by using `I2C_SPEED_STANDARD` instead — also the SparkFun library's own default. Separately, the same scan found the Motion sensor at `0x1D`, not the LIS3DH's `0x18`/`0x19` — turned out to be a genuinely different chip, the LIS3DSH, confirmed by its `WHO_AM_I` register (`0x3F`, not LIS3DH's `0x33`). `Adafruit_LIS3DH` was replaced with a direct-register I2C driver (`src/sensors/motion_lis3dsh.cpp`) written against STMicroelectronics' own `stm32-lis3dsh` reference source; double-tap wake deliberately deferred (item 5 above). Not yet reflashed/re-verified on hardware as of this entry — next step. The Fuel gauge (`0x36`) not appearing in the scan was confirmed to be simply not connected yet, not a bug.

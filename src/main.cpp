@@ -7,7 +7,7 @@
 #include "settings_store.h"
 
 #include "sensors/fuel_max17048.h"
-#include "sensors/motion_lis3dh.h"
+#include "sensors/motion_lis3dsh.h"
 #include "sensors/ppg_max30102.h"
 #include "sensors/temp_mlx90614.h"
 
@@ -25,7 +25,7 @@ namespace {
 
 PpgMax30102 g_ppg;
 TempMlx90614 g_temp;
-MotionLis3dh g_motion;
+MotionLis3dsh g_motion;
 FuelMax17048 g_fuel;
 
 Screen g_screen;
@@ -318,6 +318,22 @@ void setup() {
     g_settings.begin();
 
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+
+    // TEMPORARY bring-up diagnostic (readme.md #11): three of the four I2C
+    // sensors were timing out on real hardware while one (PPG) worked fine,
+    // which proves the bus itself is electrically sound and points at
+    // per-device wiring/power/address rather than the bus. A raw scan
+    // settles that in one boot instead of guessing address-by-address.
+    // Remove once all four sensors are confirmed initializing.
+    Serial.println("[I2C SCAN] Scanning 0x01-0x7E...");
+    for (uint8_t addr = 1; addr < 0x7F; addr++) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) {
+            Serial.printf("[I2C SCAN] Found device at 0x%02X\n", addr);
+        }
+    }
+    Serial.println("[I2C SCAN] Done.");
+
     SPI.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI, PIN_TFT_CS);
 
     pinMode(PIN_BUTTON_1, INPUT_PULLUP);
@@ -349,7 +365,9 @@ void setup() {
     checkInit("PPG", g_ppg.begin(Wire));
     checkInit("Temp", g_temp.begin(Wire));
     checkInit("Motion", g_motion.begin(Wire));
-    g_motion.configureDoubleTapWake();
+    // No configureDoubleTapWake() call — deliberately deferred for the
+    // LIS3DSH (see motion_lis3dsh.h's class comment and power_mgr.cpp's
+    // wake-source comment for the current consequence).
     checkInit("Fuel gauge", g_fuel.begin(Wire));
     bool touchOk = g_touch.begin();
     checkInit("Touch", touchOk);
