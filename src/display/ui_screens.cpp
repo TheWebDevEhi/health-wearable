@@ -16,6 +16,10 @@ void UiScreens::show(UiScreen screen) {
     _current = screen;
 }
 
+// Currently unreachable from any input — the button that called this was
+// dropped (main.cpp's pollButtons(), readme.md #5); kept as the method
+// touch navigation is meant to call once it's built, rather than deleting
+// and re-writing it later. See DEVELOPMENT.md.
 void UiScreens::nextDetailMetric() {
     switch (_detailMetric) {
         case DetailMetric::HeartRate:

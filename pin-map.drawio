@@ -126,21 +126,15 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
-        <!-- Buttons + status LED -->
-        <mxCell id="btn1" value="Button 1&#10;to GND, pull-up" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+        <!-- Button + status LED -->
+        <mxCell id="btn1" value="Button&#10;to GND, pull-up" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
           <mxGeometry x="320" y="740" width="150" height="50" as="geometry" />
         </mxCell>
-        <mxCell id="btn2" value="Button 2&#10;to GND, pull-up" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+        <mxCell id="ledw" value="Status LED&#10;on-board WS2812" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
           <mxGeometry x="320" y="810" width="150" height="50" as="geometry" />
         </mxCell>
-        <mxCell id="ledw" value="Status LED&#10;on-board WS2812" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
-          <mxGeometry x="320" y="880" width="150" height="50" as="geometry" />
-        </mxCell>
 
-        <mxCell id="e_btn1" value="GPIO3&#10;(RTC-capable, also a wake source;&#10;JTAG-select strap - don't hold at boot)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.3;exitY=1;entryX=0.5;entryY=0;fontSize=11;" edge="1" parent="1" source="mcu" target="btn1">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="e_btn2" value="GPIO15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;fontSize=11;" edge="1" parent="1" source="mcu" target="btn2">
+        <mxCell id="e_btn1" value="GPIO3&#10;(RTC-capable, also a wake source;&#10;JTAG-select strap - don't hold at boot)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;fontSize=11;" edge="1" parent="1" source="mcu" target="btn1">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e_led" value="GPIO48" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.7;exitY=1;entryX=0.5;entryY=0;fontSize=11;" edge="1" parent="1" source="mcu" target="ledw">

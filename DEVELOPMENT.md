@@ -631,3 +631,46 @@ Updated `readme.md` §8 (both wiring diagrams, the consolidated pin-map
 diagram, the §8.3 table, and a new "physical access" note explaining the
 header-vs-pad distinction) and `pin-map.drawio` to match. Rebuilt clean
 after the `config.h`/`power_mgr.cpp` changes.
+
+**2026-09-13 — Dropped Button 2; touch is meant to cover its role but
+doesn't yet.**
+Decided to go down to one physical button, with the XPT2046 touch panel
+eventually taking over Button 2's old responsibilities (Detail-screen
+metric cycling, jump-to-Home) — most likely via a bottom nav bar, per
+readme.md §5. This is a real, currently-unfilled gap, not a cosmetic
+rename:
+
+- `config.h`: removed `PIN_BUTTON_2` entirely (was GPIO15) rather than
+  leaving it declared-but-unused — nothing in the firmware referenced it
+  once `main.cpp` stopped polling it, so keeping the constant around would
+  just be a dangling pin number nobody could trust meant anything.
+- `main.cpp`: `pollButtons()` now only reads `PIN_BUTTON_1`. The single
+  button keeps its existing Home → Detail → Settings → Home cycle
+  unchanged — that loop already reaches every screen, so basic navigation
+  survives losing the second button. What's actually lost: there's no
+  input path left to cycle *which* metric the Detail screen shows, and no
+  one-press shortcut back to Home from Settings/Alert (still reachable, just
+  by cycling through instead of jumping directly).
+- `ui_screens.cpp`: `UiScreens::nextDetailMetric()` is now uncalled from
+  anywhere. Left it in rather than deleting it — it's the exact method
+  touch navigation is meant to call once built, not genuinely dead code —
+  but commented it to say so, so it doesn't read as an unexplained orphan
+  to the next person in this file.
+- `power_mgr.cpp`: dropped the now-stale "Button 2 is RTC-capable but not
+  wired as a wake source" comment; only one button exists to discuss now.
+
+**This means touch navigation is no longer optional polish — it's now the
+only way to reach per-metric detail once built.** Before touch can actually
+drive anything, still needed (tracked here since readme.md #11 is for
+hardware bring-up, not this): `TouchXpt2046::readRaw()`'s raw-ADC-to-panel
+calibration (currently a TODO in `touch_xpt2046.h`), and a `pollTouch()`
+(or similar) wired into `displayTask` that actually calls `pressed()`/
+`readRaw()` and maps a screen region to `g_ui.nextDetailMetric()` /
+`g_userScreen = UiScreen::Home`. Until both exist, the Detail screen is
+permanently stuck on whichever metric `UiScreens` defaults to.
+
+Updated `readme.md` (§1 diagram's button count, §5 prose, both wiring
+diagrams, the consolidated pin-map diagram, and the §8.3 table/note — GPIO15
+is now called out as free rather than assigned) and `pin-map.drawio` to
+match. Rebuilt clean after the `config.h`/`main.cpp`/`ui_screens.cpp`/
+`power_mgr.cpp` changes.

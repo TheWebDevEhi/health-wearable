@@ -66,7 +66,7 @@ flowchart TB
     end
 
     LED["Status LED (WS2812)"]
-    BTN["2 side buttons"]
+    BTN["1 side button"]
 
     subgraph PHONE["Off-device"]
         PWA["Web Bluetooth PWA"]
@@ -142,8 +142,11 @@ Processing notes:
 - **Settings** — brightness, alert limits, and a "sync now" action that briefly
   turns on Wi-Fi.
 
-Two side buttons are the main control; the XPT2046 touch layer is available for
-the odd on-screen tap.
+One side button is the primary control (cycles Home → Detail → Settings →
+Home); the XPT2046 touch layer is meant to eventually take over finer
+navigation (e.g. a bottom nav bar, cycling the Detail screen's metric), but
+that isn't built yet — see [DEVELOPMENT.md](DEVELOPMENT.md) for what's
+still missing before touch can actually drive the UI.
 
 **Wake on double-tap.** The screen and main chip deep-sleep after a short idle
 period. The LIS3DH stays awake on its own hardware tap engine, watching for a
@@ -274,8 +277,7 @@ flowchart TB
     MCU -->|GPIO7 T_CS| XPT
     MCU -->|GPIO2 T_IRQ| XPT
 
-    MCU -->|GPIO3| BTN1["Button 1<br/>to GND, pull-up"]
-    MCU -->|GPIO15| BTN2["Button 2<br/>to GND, pull-up"]
+    MCU -->|GPIO3| BTN1["Button<br/>to GND, pull-up"]
     MCU --- LEDW["Status LED<br/>WS2812, GPIO48"]
 ```
 
@@ -309,8 +311,7 @@ flowchart TB
     MCU -->|GPIO7 T_CS| XPT
     MCU -->|GPIO2 T_IRQ| XPT
 
-    MCU -->|GPIO3| BTN1["Button 1<br/>GND, pull-up"]
-    MCU -->|GPIO15| BTN2["Button 2<br/>GND, pull-up"]
+    MCU -->|GPIO3| BTN1["Button<br/>GND, pull-up"]
     MCU -->|GPIO48| LEDW["Status LED<br/>WS2812"]
 ```
 
@@ -367,8 +368,7 @@ A schematic-style version of the same connections, editable in
 | LIS3DH INT1 (double-tap wake) | —                        | 1    | RTC-capable pin, required for deep-sleep wake |
 | I2C data                      | sensor SDA              | 8    | Shared by all four sensors                    |
 | I2C clock                     | sensor SCL              | 9    | Shared by all four sensors                    |
-| Button 1                      | —                        | 3    | To GND, internal pull-up; also a wake source; JTAG-select strap — don't hold at power-on/reset |
-| Button 2                      | —                        | 15   | To GND, internal pull-up                      |
+| Button                         | —                        | 3    | To GND, internal pull-up; also a wake source; JTAG-select strap — don't hold at power-on/reset |
 | Status LED                    | on-board WS2812         | 48   |                                                |
 | MAX30102 INT                  | —                        | 40   | Optional; not yet wired to firmware logic; also shares JTAG MTDO — revisit before use |
 | MAX17048 ALRT                 | —                        | 38   | Optional low-battery flag; not yet wired to firmware logic |
@@ -377,15 +377,15 @@ A schematic-style version of the same connections, editable in
 header only covers **GPIO1–13**, plus GPIO15–17 confirmed separately
 accessible. GPIO0 isn't exposed at all — it's wired internally to the
 board's own onboard BOOT button, not just unbroken-out. Everything else used
-above and not in that set — GPIO21, 38, 40, 47, 48 — sits on bottom-side
-pads with no header access, needing a hand-soldered wire (a pogo-pin fixture
-would help for repeated testing but isn't required for a permanent
-connection). Since GPIO1–13 is almost entirely claimed by the
-display/touch/I2C/wake-sensor wiring below, GPIO3 and GPIO15 are what's left
-for the two buttons — moved here specifically so neither needs the
-pad-soldering workaround. Double-check GPIO15 against the physical unit
-before final assembly; it wasn't in this doc's original "exposed" figure and
-was added based on a closer look at the board's pinout reference.
+above and not in that set — GPIO38, 40, 48 — sits on bottom-side pads with
+no header access, needing a hand-soldered wire (a pogo-pin fixture would
+help for repeated testing but isn't required for a permanent connection).
+GPIO3 is what's left of GPIO1–13 once the display/touch/I2C/wake-sensor
+wiring below claims the rest, which is why the sole button sits there
+instead of needing the pad-soldering workaround. GPIO15 is now free (the
+second button was dropped in favor of eventually letting touch cover that
+navigation, readme.md #5) — reserved for whatever needs a header-accessible
+pin next, rather than sitting unused for no reason.
 
 **Pins to keep clear:** GPIO 0, 45, 46 (boot strapping), GPIO 19/20 (USB),
 GPIO 43/44 (serial debug). GPIO 26–32 are tied to flash/PSRAM and are not

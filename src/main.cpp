@@ -74,48 +74,42 @@ void sensorTask(void *) {
 }
 
 // Button semantics (implementation choice, not specified in readme.md —
-// confirm/tune at bring-up): Button 1 cycles Home -> Detail -> Settings ->
-// Home; Button 2 cycles the Detail screen's metric, or jumps to Home from
-// anywhere else. Polled at the display task's 200 ms tick rather than via
-// interrupt, so a press shorter than that can be missed — fine for now, see
-// DEVELOPMENT.md if it feels laggy on real hardware.
+// confirm/tune at bring-up): the single button cycles Home -> Detail ->
+// Settings -> Home. Polled at the display task's 200 ms tick rather than
+// via interrupt, so a press shorter than that can be missed — fine for now,
+// see DEVELOPMENT.md if it feels laggy on real hardware.
+//
+// Down to one button (readme.md #5): there used to be a second button that
+// cycled the Detail screen's metric or jumped straight to Home from
+// anywhere. Neither is reachable right now — the touch panel is meant to
+// take over that role eventually, but touch isn't hooked into navigation
+// yet (g_touch is initialized in setup() but nothing calls pressed()/
+// readRaw() from a task loop, and raw-ADC-to-panel calibration is still a
+// TODO in touch_xpt2046.h). Until that's built, Detail always shows
+// whichever metric UiScreens defaults to. See DEVELOPMENT.md.
 void pollButtons() {
     static bool prevButton1 = HIGH;
-    static bool prevButton2 = HIGH;
 
     bool button1 = digitalRead(PIN_BUTTON_1);
-    bool button2 = digitalRead(PIN_BUTTON_2);
-
     bool button1Pressed = (prevButton1 == HIGH) && (button1 == LOW);
-    bool button2Pressed = (prevButton2 == HIGH) && (button2 == LOW);
     prevButton1 = button1;
-    prevButton2 = button2;
 
-    if (!button1Pressed && !button2Pressed) {
+    if (!button1Pressed) {
         return;
     }
     g_power.noteActivity();
 
-    if (button1Pressed) {
-        switch (g_userScreen) {
-            case UiScreen::Home:
-                g_userScreen = UiScreen::Detail;
-                break;
-            case UiScreen::Detail:
-                g_userScreen = UiScreen::Settings;
-                break;
-            case UiScreen::Settings:
-            case UiScreen::Alert:
-                g_userScreen = UiScreen::Home;
-                break;
-        }
-    }
-    if (button2Pressed) {
-        if (g_userScreen == UiScreen::Detail) {
-            g_ui.nextDetailMetric();
-        } else {
+    switch (g_userScreen) {
+        case UiScreen::Home:
+            g_userScreen = UiScreen::Detail;
+            break;
+        case UiScreen::Detail:
+            g_userScreen = UiScreen::Settings;
+            break;
+        case UiScreen::Settings:
+        case UiScreen::Alert:
             g_userScreen = UiScreen::Home;
-        }
+            break;
     }
 }
 
@@ -189,7 +183,6 @@ void setup() {
     SPI.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI, PIN_TFT_CS);
 
     pinMode(PIN_BUTTON_1, INPUT_PULLUP);
-    pinMode(PIN_BUTTON_2, INPUT_PULLUP);
 
     // Display first, so init failures below have somewhere to be shown —
     // not just a Serial log nobody without a debug cable would ever see

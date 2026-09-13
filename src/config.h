@@ -36,15 +36,17 @@ constexpr int PIN_I2C_SCL = 9;
 // Motion wake — RTC-capable, required for deep-sleep wake (readme.md #5)
 constexpr int PIN_LIS3DH_INT1 = 1;
 
-// Buttons (to GND, internal pull-up).
-// Both moved off the ESP32-S3 SuperMini's non-header pads (readme.md #8.3
-// "Pins to keep clear") onto pins actually reachable without pogo pins.
-// GPIO3 and GPIO15 are strapping-adjacent/"system duty" pins per the
+// Button (to GND, internal pull-up).
+// Down to one physical button — the second was dropped in favor of the
+// touch panel eventually covering that navigation (readme.md #5); until
+// touch navigation is actually built, Detail-screen metric cycling has no
+// input path (see DEVELOPMENT.md). Moved off the ESP32-S3 SuperMini's
+// non-header pads (readme.md #8.3 "Pins to keep clear") onto a pin actually
+// reachable without pogo pins. GPIO3 is a strapping-adjacent pin per the
 // board's pinout reference, not hazard-free — see the note in readme.md
-// #8.3. Don't hold either button down while powering on or resetting the
+// #8.3. Don't hold the button down while powering on or resetting the
 // board: GPIO3 selects the JTAG interface at boot.
 constexpr int PIN_BUTTON_1 = 3;   // RTC-capable; doubles as a wake source
-constexpr int PIN_BUTTON_2 = 15;
 
 // Status LED (on-board WS2812)
 constexpr int PIN_STATUS_LED = 48;
