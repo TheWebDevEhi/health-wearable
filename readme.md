@@ -139,6 +139,11 @@ Processing notes:
 - **Detail screens** — one signal at a time with a short scrolling trend line,
   reached via the button or the touch nav bar.
 - **Alerts** — full-screen warning plus a blinking status LED, mirrored to the phone.
+  A tap or button press dismisses the warning screen back to normal navigation
+  (found necessary at bring-up — without it, an active alert made every other
+  screen unreachable for as long as the condition held); the status LED keeps
+  reflecting the real condition regardless, and the warning screen re-interrupts
+  after a cooldown if the condition is still active (see DEVELOPMENT.md).
 - **Settings** — on-device: tap to cycle brightness (Low/Med/High), tap for a
   "sync now" action that briefly turns on Wi-Fi to check for a firmware
   update. Alert limits are phone-app-only by design (see DEVELOPMENT.md for

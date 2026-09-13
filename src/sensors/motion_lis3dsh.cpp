@@ -32,11 +32,14 @@ constexpr uint8_t kCtrlReg4Value  = kOdr100Hz | kBlockDataUpdate | kAxesXYZEnabl
 // above the range ceiling.
 constexpr uint8_t kCtrlReg5Value = 0x18;  // FSCALE = 011 -> +/-8g
 
-// mg per digit at +/-8g, taken directly from ST's own sensitivity table
-// (LIS3DSH_SENSITIVITY_0_24G), not derived. The raw 16-bit register value
-// is a 12-bit reading left-justified in a 16-bit word — ST's own driver
-// right-shifts by 4 to get the effective digit count before this scale
-// applies ("ACC[mg] = SENSITIVITY * (out_h*256+out_l)/16").
+// mg per LSB at +/-8g, taken directly from ST's own sensitivity table
+// (LIS3DSH_SENSITIVITY_0_24G), applied straight to the raw 16-bit register
+// value — NOT to a >>4-shifted "12-bit digit" count, despite what a
+// comment elsewhere in ST's own reference driver suggests (see
+// motion_lis3dsh.h and this file's update() for the real-hardware
+// confirmation that the shifted interpretation is wrong: 0.24mg over the
+// full 16-bit range is ~7.9g, matching +/-8g; over a shifted 12-bit range
+// it's only ~0.49g).
 constexpr float kSensitivityMgPerDigit = 0.24f;
 }  // namespace
 
@@ -108,15 +111,34 @@ void MotionLis3dsh::update() {
     }
     uint32_t nowMs = millis();
 
-    // >>4 sign-extends on this toolchain (arithmetic shift on a signed
-    // type) — same assumption already relied on elsewhere in this codebase
-    // (touch_xpt2046.cpp's calibration math), not a new one introduced here.
-    float xG = (static_cast<float>(rawX >> 4) * kSensitivityMgPerDigit) / 1000.0f;
-    float yG = (static_cast<float>(rawY >> 4) * kSensitivityMgPerDigit) / 1000.0f;
-    float zG = (static_cast<float>(rawZ >> 4) * kSensitivityMgPerDigit) / 1000.0f;
+    // Sensitivity applies directly to the raw 16-bit register value, NOT to
+    // a >>4-shifted 12-bit "digit" count — a real bug found on real
+    // hardware (readme.md #11, DEVELOPMENT.md): with the shift applied, a
+    // stationary device read ~0.06g instead of ~1.0g, off by almost
+    // exactly 16x. ST's own sensitivity table (0.24 mg/digit at +/-8g)
+    // only makes physical sense against the full 16-bit range — 0.24mg *
+    // 32768 (full int16_t range) is ~7.9g, matching the +/-8g full-scale
+    // setting; the same figure against the shifted 12-bit range (0.24mg *
+    // 2048) is only ~0.49g, nowhere near +/-8g. Confirmed empirically too:
+    // removing the shift brought a stationary reading to ~1.006g.
+    float xG = (static_cast<float>(rawX) * kSensitivityMgPerDigit) / 1000.0f;
+    float yG = (static_cast<float>(rawY) * kSensitivityMgPerDigit) / 1000.0f;
+    float zG = (static_cast<float>(rawZ) * kSensitivityMgPerDigit) / 1000.0f;
 
     float magnitude = std::sqrt(xG * xG + yG * yG + zG * zG);
     _isMoving = std::fabs(magnitude - 1.0f) > kMovementThresholdG;
+
+    // TEMPORARY bring-up diagnostic (readme.md #11): confirms whether this
+    // brand-new register-level driver reports a sane ~1.0g when the device
+    // is sitting still — if magnitude is far from 1.0g, isMoving() reads
+    // true forever, which would gate PpgMax30102::update() off permanently
+    // regardless of finger placement. Remove once confirmed sane.
+    static uint32_t lastLogMs = 0;
+    if (millis() - lastLogMs >= 1000) {
+        lastLogMs = millis();
+        Serial.printf("[MOTION DEBUG] raw=(%d,%d,%d) g=(%.2f,%.2f,%.2f) magnitude=%.2f isMoving=%d\n", rawX, rawY,
+                      rawZ, xG, yG, zG, magnitude, _isMoving);
+    }
 
     // Step counting: count on each rising edge above kStepThresholdG,
     // debounced by kStepDebounceMs so a single step's rise-then-fall in

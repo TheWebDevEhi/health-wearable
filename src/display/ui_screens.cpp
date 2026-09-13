@@ -229,6 +229,13 @@ void UiScreens::renderAlert(const SensorSnapshot &data) {
     if (data.batteryLow) {
         tft.println("Battery low");
     }
+
+    // Tap or button dismisses this screen (main.cpp's pollButtons()/
+    // pollTouch()) — it re-interrupts later if the condition is still
+    // active (config.h's ALERT_ACK_COOLDOWN_MS), so this isn't a
+    // permanent silence, just room to check other screens.
+    tft.setCursor(8, 140);
+    tft.println("Tap or press button");
 }
 
 void UiScreens::renderSettings() {

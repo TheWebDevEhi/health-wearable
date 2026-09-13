@@ -82,6 +82,20 @@ constexpr float ALERT_SPO2_LOW_PCT = 92.0f;
 constexpr float ALERT_TEMP_LOW_C   = 35.0f;
 constexpr float ALERT_TEMP_HIGH_C  = 38.5f;
 
+// How long a dismissed alert stays dismissed before re-interrupting the
+// display, if the underlying condition is still active (readme.md #5, #11).
+// A tap or button press while the Alert screen is showing dismisses it back
+// to normal navigation — added because the original full-screen-with-no-
+// escape design made every other screen (and touch/button navigation
+// entirely) unreachable for as long as the alert condition held, found
+// during real end-to-end bring-up. Deliberately not "dismissed forever":
+// a real ongoing condition (not just a one-off fall flag, which
+// self-clears via kFallAlertDurationMs in motion_lis3dsh.h) should keep
+// getting the wearer's attention periodically, not go silent after one tap.
+// The status LED is unaffected by dismissal either way — it always
+// reflects the real, current condition (see main.cpp's displayTask()).
+constexpr uint32_t ALERT_ACK_COOLDOWN_MS = 30000;
+
 // TODO: calibrate against a known-good reference (readme.md #3).
 constexpr float TEMP_SKIN_TO_BODY_OFFSET_C = 2.0f;
 

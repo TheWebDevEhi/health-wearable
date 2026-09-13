@@ -1296,3 +1296,201 @@ printing real sensor values once a second — which directly doubles as
 what was asked for (seeing sensor readings over serial without the
 display connected), no separate serial-dump feature needed. Rebuilt
 clean; not yet reflashed/re-verified on hardware as of this entry.
+
+**Same day, sixth hardware issue: a second, worse unguarded wait —
+found precisely because the fifth issue's checkpoint prints were
+already in place.** Reflashed with the timeout fix above plus a string
+of `[BOOT]` checkpoint `Serial.println`s bracketing every remaining
+step of `setup()`, specifically to stop guessing where a hang lives
+and just watch the log stop at the exact line. It stopped right after
+`"calibration point 1 touched, reading raw..."` — meaning
+`waitForTouchOrSkip()` had already returned `true` (not via its new
+timeout, near-instantly), and the very next thing,
+`while (g_touch.pressed()) { delay(20); }` (waiting for finger-release
+before showing the second target), never exited. That loop had no
+timeout or button escape at all — a real gap `waitForTouchOrSkip()`'s
+own fix didn't cover, since it's a separate loop with no relation to
+the first.
+
+Root cause is consistent with what's already known: with no touch
+panel wired, the IRQ pin floats, and `g_touch.pressed()` reads a
+persistent (not toggling) `true` — explaining both why
+`waitForTouchOrSkip()` returns `true` almost immediately (a floating
+pin already reads "pressed" from the very first check, no need to wait
+out its 10s timeout) and why the very next release-wait then spins
+forever (the same floating pin never reports "released").
+
+Fixed by extracting a new `waitForRelease()` helper (same shape as
+`waitForTouchOrSkip()`: a 3-second timeout, logs
+`[INIT] Touch release wait timed out, continuing` and returns rather
+than blocking indefinitely) and using it in both of
+`applyStoredOrNewCalibration()`'s previously-unguarded release-waits
+(one per calibration point).
+
+**Known, flagged-not-silently-shipped consequence**: with no real
+panel, both calibration points will now report a spurious "touched"
+almost instantly (the same floating-pin read), so calibration will
+*complete* — using whatever garbage raw ADC values the floating touch
+lines happen to read — and `setTouchCalibration()` will persist that
+garbage to NVS as if it were real. Since `touchCalibrated()` then
+returns true on every future boot, this would silently skip real
+calibration once a display/touch panel is actually connected later,
+unless the stored calibration is cleared or recalibration is
+explicitly re-triggered at that point. Not fixed further as of this
+entry — raised to the user rather than deciding unilaterally, since
+the fix (e.g., skip persisting when a release-wait times out, since a
+real deliberate tap releases almost immediately, well under 3s) is a
+real behavior change to weigh, not just a bring-up unblock. Rebuilt
+clean; not yet reflashed/re-verified on hardware as of this entry.
+
+**Same day, seventh hardware issue: boot now completes end-to-end —
+real values reach the companion app for the first time.** Reflashed
+with both timeout fixes above. `setup()` now reaches task creation,
+`bleTask` ticks, and the `[BLE DEBUG]` line shows real, live
+`temp`/`connected` values; the companion app showed real numbers for
+the first time this entire bring-up. `steps=0` and
+`ppgSignalValid=0`/`hr=0.0`/`spo2=0.0` are consistent with the device
+sitting still with nothing touching the PPG sensor — not a bug,
+nothing to fix, just needs an actual finger on the sensor and the
+board actually moved to produce anything else.
+
+One real, fixable issue the log did surface: a continuous
+`i2cWriteReadNonStop returned Error -1` roughly once every 100ms,
+forever. Traced to `sensorTask()` calling `g_fuel.update()`
+unconditionally every tick regardless of whether
+`FuelMax17048::begin()` ever succeeded — the disconnected fuel gauge
+was being retried on the shared I2C bus every single sample cycle,
+pointless bus traffic and log noise for a device that was never going
+to respond (confirmed disconnected, not a wiring bug). Also explains
+why `batt` was reporting `nan`: `update()` kept running against a
+never-initialized `Adafruit_MAX1704X` instance, presumably computing a
+percentage from garbage/failed reads.
+
+Fixed generally, not just for the fuel gauge: `setup()` now captures
+each sensor's `begin()` result into new file-scope flags
+(`g_ppgOk`/`g_tempOk`/`g_motionOk`/`g_fuelOk`), and `sensorTask()`
+gates each corresponding `update()` call on its flag — a sensor that
+never came up isn't going to start responding on some later tick just
+because time passed. `batteryPercent()` now correctly reports `0.0`
+(its class member's actual default) instead of `nan`, since
+`update()` never runs to leave it in a garbage state. Rebuilt clean;
+not yet reflashed/re-verified on hardware as of this entry.
+
+**Same day, eighth hardware issue: real bug in the brand-new LIS3DSH
+driver — a stationary device read ~0.06g instead of ~1.0g, keeping
+`isMoving()` stuck true forever and silently blocking PPG entirely.**
+Reflashed with the fuel-gauge-gating fix; real values were finally
+reaching the app, but HR/SpO2 stayed blank even after minutes with a
+finger held on the PPG sensor. Added temporary diagnostics
+(`Serial.printf` in both `PpgMax30102::update()`/`runAlgorithm()` and
+`MotionLis3dsh::update()`, readme.md #11, remove once real HR/SpO2
+confirmed) rather than guessing which of several plausible causes it
+was.
+
+The motion diagnostic was the smoking gun: `magnitude=0.06` on every
+tick, stationary device, `isMoving=1` always — which explained the PPG
+side completely on its own, without needing the PPG diagnostic at
+all. `PpgMax30102::update(armMoving)` returns immediately whenever
+`armMoving` is true, before ever touching the FIFO
+(`irAvailable=0`/`sampleIndex=0` forever in the PPG debug line
+confirmed this) — so a permanently-stuck `isMoving()` meant PPG could
+never accumulate samples regardless of skin contact. Not a PPG bug at
+all; the newly-written Motion driver was silently starving it.
+
+Root cause, confirmed by the numbers rather than just theorized:
+`update()`'s g-force conversion applied ST's `0.24 mg/digit`
+sensitivity (`+/-8g` full scale) to a `>>4`-shifted value, on the
+assumption (from a comment inside ST's own reference driver) that the
+sensitivity is meant for a 12-bit "digit" count, not the raw 16-bit
+register value. The real-hardware numbers say otherwise: `0.24 mg/digit`
+applied to the *full* 16-bit range (`0.24mg * 32768 ≈ 7.9g`) lines up
+with the configured `+/-8g` scale almost exactly; applied to the
+shifted 12-bit range (`0.24mg * 2048 ≈ 0.49g`) doesn't come close.
+Removing the `>>4` and reapplying the same raw values by hand gives
+`magnitude ≈ 1.006g` — essentially exact for a stationary device.
+
+Fixed by removing the `>>4` shift in `motion_lis3dsh.cpp`'s `update()`
+— sensitivity now applies directly to the raw 16-bit axis values.
+Left the diagnostic prints in place for one more round rather than
+pulling them immediately, since this was diagnosed from a real
+hardware log, not yet re-confirmed against one. Rebuilt clean; not yet
+reflashed/re-verified on hardware as of this entry.
+
+Also explained to the user, not a bug: the device disconnecting from
+serial after roughly 15 seconds of no interaction, with sensors still
+powered, is `PowerMgr` correctly entering deep sleep on
+`IDLE_TIMEOUT_MS` (`config.h`, 15s) when nothing has touched the
+button/touch panel — deep sleep drops USB-CDC while leaving the shared
+3.3V rail (and thus the sensors) powered, exactly matching what was
+observed. Offered to temporarily extend it for easier bring-up
+debugging; not changed as of this entry pending the user's answer.
+
+**2026-09-14 — First real look at the physical display: a real color
+bug, a real UX lockout, and a boot-screen annoyance, all fixed.** The
+display/touch module got connected for the first time. Three separate
+things came out of that:
+
+**Color order was wrong** — `renderAlert()` explicitly sets
+`TFT_RED`, but it displayed as blue. Checked TFT_eSPI's own
+`ST7735_Defines.h` rather than guessing: `ST7735_GREENTAB` (the tab
+variant this project already uses) defaults to BGR order whenever
+`TFT_RGB_ORDER` isn't explicitly set — wrong for this physical panel,
+which needs RGB. Added `-D TFT_RGB_ORDER=1` to `platformio.ini`
+(confirmed it's an int, 1=RGB else=BGR, not a symbolic `TFT_RGB`/
+`TFT_BGR` macro — another thing checked against the header rather than
+assumed).
+
+**The Alert screen had no way out** — a real, user-discovered UX bug,
+not just a preference. `displayTask()` overrides the display with the
+full-screen Alert view for as long as `sensorDataIsAlert()` is true,
+with no escape: button presses only updated `g_userScreen` in the
+background (by design, so navigation state isn't lost), and touch was
+explicitly silenced during an alert (this session's earlier
+touch-during-alert fix). Net effect: with any alert condition active
+(and note the still-untuned PPG readings from earlier today could
+easily produce an out-of-range HR that triggers exactly this), Home/
+Detail/Settings became completely unreachable until the condition
+cleared on its own.
+
+Presented two fixes and let the user choose: redesign the alert as a
+persistent top banner (bigger change, touches every screen's layout),
+or add a dismiss/acknowledge action (smaller, contained). User picked
+dismiss.
+
+Implemented as: `displayTask()` now tracks `g_alertAcknowledged`/
+`g_alertAckMs` (`main.cpp`). A tap or button press while the Alert
+screen is actually showing (`showAlert`, passed into both
+`pollButtons()` and `pollTouch()` — a signature change for both) sets
+`g_alertAcknowledged` instead of its previous behavior (cycling
+navigation for the button; being a silenced no-op for touch, per the
+earlier fix). The alert then re-interrupts if the real condition is
+still active after `ALERT_ACK_COOLDOWN_MS` (`config.h`, 30s
+placeholder, not tuned) — deliberately not a permanent dismissal, so a
+genuinely ongoing condition keeps getting the wearer's attention
+periodically rather than going silent after one tap. The status LED
+is intentionally *not* gated by dismissal — `g_statusLed.setAlert()`
+still reads the real `alertCondition`, not `showAlert`, so dismissing
+the screen doesn't also silence the one indicator that's still
+low-effort to notice from across a room. `renderAlert()` gained a
+"Tap or press button" hint line so this new interaction is
+discoverable without reading the source.
+
+**Fuel gauge boot-screen nag** — the fuel gauge is deliberately not
+connected yet (user's own choice, made explicit earlier this session),
+but `checkInit()` was putting it on the orange "INIT FAILED" screen
+and adding a 3-second boot delay on every single boot for a condition
+that's known, expected, and not actionable right now. Presented as a
+choice (exclude it from the visual boot screen vs. leave every
+failure visible with no exceptions); user picked excluding it.
+Implemented by no longer routing the Fuel gauge's `begin()` result
+through `checkInit()` — it still logs
+`[INIT] Fuel gauge failed to initialize (not shown on boot screen — not yet connected)`
+to Serial for diagnostics, it just no longer appends to `failedInit`,
+so it alone can't trigger the visual screen/delay. Other genuine
+failures (PPG/Temp/Motion/Touch/BLE) are unaffected and still show as
+before.
+
+Rebuilt clean (RAM 56,328/327,680 bytes — 17.2%; Flash
+1,058,561/1,310,720 bytes — 80.8%). Updated readme.md §5 to describe
+the dismiss behavior. Not yet reflashed/re-verified on hardware as of
+this entry.

@@ -510,6 +510,7 @@
                 "USE_FSPI_PORT=1",
                 "ST7735_DRIVER=1",
                 "ST7735_GREENTAB=1",
+                "TFT_RGB_ORDER=1",
                 "TFT_WIDTH=128",
                 "TFT_HEIGHT=160",
                 "TFT_MOSI=11",
